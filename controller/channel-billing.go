@@ -67,6 +67,8 @@ type ChannelPlanQuota struct {
 
 type ChannelPlanQuotaItem struct {
 	Type      string  `json:"type"`
+	Unit      float64 `json:"unit"`
+	Number    float64 `json:"number"`
 	Limit     float64 `json:"limit"`
 	Used      float64 `json:"used"`
 	Remaining float64 `json:"remaining"`
@@ -122,8 +124,13 @@ func parseZaiPlanQuota(body []byte) (*ChannelPlanQuota, error) {
 	}
 	quota := &ChannelPlanQuota{Items: make([]ChannelPlanQuotaItem, 0, len(response.Data.Limits))}
 	for _, limit := range response.Data.Limits {
+		used := limit.CurrentValue
+		if derivedUsed := limit.Usage - limit.Remaining; limit.Usage > 0 && derivedUsed > used {
+			used = derivedUsed
+		}
 		quota.Items = append(quota.Items, ChannelPlanQuotaItem{
-			Type: limit.Type, Limit: limit.Usage, Used: limit.CurrentValue,
+			Type: limit.Type, Unit: limit.Unit, Number: limit.Number,
+			Limit: limit.Usage, Used: used,
 			Remaining: limit.Remaining, Percent: limit.Percentage, ResetAt: limit.NextResetAt,
 		})
 	}

@@ -36,6 +36,8 @@ export type ChannelInfo = z.infer<typeof channelInfoSchema>
 
 export const channelPlanQuotaItemSchema = z.object({
   type: z.string(),
+  unit: z.number().default(0),
+  number: z.number().default(0),
   limit: z.number(),
   used: z.number(),
   remaining: z.number(),

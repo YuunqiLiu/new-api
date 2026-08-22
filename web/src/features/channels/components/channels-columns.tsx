@@ -494,55 +494,88 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     const visibleItems = planQuota.items.filter(
       (item) => item.limit > 0 || item.used > 0 || item.percent > 0
     )
-    const quotaLabel = (item: ChannelPlanQuota['items'][number]) => {
-      const name =
-        item.type === 'TOKENS_LIMIT'
-          ? 'Token'
-          : item.type === 'TIME_LIMIT'
-            ? t('Calls')
-            : item.type
-      if (item.limit <= 0) {
-        return `${name} ${item.percent}%`
-      }
-      return `${name} ${item.used.toLocaleString(locale)} / ${item.limit.toLocaleString(locale)} (${item.percent}%)`
+    const items = visibleItems.length > 0 ? visibleItems : planQuota.items
+    const quotaTypeLabel = (type: string) => {
+      if (type === 'TOKENS_LIMIT') return 'Token'
+      if (type === 'CREDIT_LIMIT') return 'Credit'
+      if (type === 'TIME_LIMIT') return 'MCP'
+      return type.replace(/_LIMIT$/, '')
     }
+    const quotaPeriodLabel = (item: ChannelPlanQuota['items'][number]) => {
+      if (item.unit === 3 && item.number === 5) return '5h'
+      if (item.unit === 6 && item.number === 1) return t('Weekly')
+      if (item.unit === 5 && item.number === 1) return t('Monthly')
+      return item.number > 0 ? `${item.number} × ${item.unit}` : '-'
+    }
+    const quotaUsageLabel = (item: ChannelPlanQuota['items'][number]) => {
+      if (item.limit <= 0) {
+        return `${quotaPeriodLabel(item)} · ${t('Used:')} ${item.percent}% · ${t('Remaining:')} ${Math.max(0, 100 - item.percent)}%`
+      }
+      return `${quotaPeriodLabel(item)} · ${t('Used:')} ${item.used.toLocaleString(locale)} / ${item.limit.toLocaleString(locale)} · ${t('Remaining:')} ${item.remaining.toLocaleString(locale)} · ${item.percent}%`
+    }
+    const quotaVariant = (percent: number): StatusBadgeProps['variant'] => {
+      if (percent >= 90) return 'danger'
+      if (percent >= 75) return 'warning'
+      return 'info'
+    }
+    const quotaGroups = Array.from(
+      items.reduce((groups, item) => {
+        const group = groups.get(item.type) ?? []
+        group.push(item)
+        groups.set(item.type, group)
+        return groups
+      }, new Map<string, ChannelPlanQuota['items']>())
+    )
 
     return (
       <TooltipProvider>
-        <div className='-ml-1.5 flex flex-wrap items-center gap-1'>
-          {(visibleItems.length > 0 ? visibleItems : planQuota.items).map(
-            (item, index) => (
-              <Tooltip
-                key={`${item.type}-${item.reset_at ?? index}-${item.limit}`}
-              >
-                <TooltipTrigger
-                  render={
-                    <StatusBadge
-                      label={
-                        sensitiveVisible
-                          ? isUpdating
-                            ? t('Updating...')
-                            : quotaLabel(item)
-                          : SENSITIVE_MASK
-                      }
-                      variant={item.percent >= 90 ? 'danger' : 'info'}
-                      size='sm'
-                      copyable={false}
-                      showDot={false}
-                      className='cursor-pointer'
-                      onClick={handleClickUpdate}
-                    />
-                  }
-                />
-                <TooltipContent>
-                  <p>
-                    {sensitiveVisible ? quotaLabel(item) : SENSITIVE_MASK}
-                  </p>
-                  <p>{t('Click to update balance')}</p>
-                </TooltipContent>
-              </Tooltip>
-            )
-          )}
+        <div className='-ml-1.5 flex flex-col items-start gap-1'>
+          {quotaGroups.map(([type, groupItems]) => (
+            <div key={type} className='flex flex-wrap items-center gap-1'>
+              <span className='text-muted-foreground min-w-12 text-xs font-medium'>
+                {quotaTypeLabel(type)}
+              </span>
+              {groupItems.map((item, index) => (
+                <Tooltip
+                  key={`${item.type}-${item.reset_at ?? index}-${item.limit}`}
+                >
+                  <TooltipTrigger
+                    render={
+                      <StatusBadge
+                        label={
+                          sensitiveVisible
+                            ? isUpdating
+                              ? t('Updating...')
+                              : quotaUsageLabel(item)
+                            : SENSITIVE_MASK
+                        }
+                        variant={quotaVariant(item.percent)}
+                        size='sm'
+                        copyable={false}
+                        showDot={false}
+                        className='cursor-pointer'
+                        onClick={handleClickUpdate}
+                      />
+                    }
+                  />
+                  <TooltipContent>
+                    <p>
+                      {sensitiveVisible
+                        ? quotaUsageLabel(item)
+                        : SENSITIVE_MASK}
+                    </p>
+                    {item.reset_at && (
+                      <p>
+                        {t('Next reset')}:{' '}
+                        {new Date(item.reset_at).toLocaleString(locale)}
+                      </p>
+                    )}
+                    <p>{t('Click to update balance')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          ))}
         </div>
       </TooltipProvider>
     )
