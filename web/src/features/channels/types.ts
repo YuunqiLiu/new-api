@@ -34,6 +34,21 @@ export const channelInfoSchema = z.object({
 
 export type ChannelInfo = z.infer<typeof channelInfoSchema>
 
+export const channelPlanQuotaItemSchema = z.object({
+  type: z.string(),
+  limit: z.number(),
+  used: z.number(),
+  remaining: z.number(),
+  percent: z.number(),
+  reset_at: z.number().nullish(),
+})
+
+export const channelPlanQuotaSchema = z.object({
+  items: z.array(channelPlanQuotaItemSchema),
+})
+
+export type ChannelPlanQuota = z.infer<typeof channelPlanQuotaSchema>
+
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
@@ -50,6 +65,8 @@ export const channelSchema = z.object({
   other: z.string().default(''),
   balance: z.number().default(0), // in USD
   balance_updated_time: z.number(),
+  plan_quota: z.string().default(''),
+  plan_quota_updated_time: z.number().default(0),
   models: z.string().default(''),
   group: z.string().default('default'),
   used_quota: z.number().default(0),
@@ -198,6 +215,7 @@ export interface ChannelBalanceResponse {
   balance?: number
   currency?: string
   raw_response?: string
+  plan_quota?: ChannelPlanQuota
 }
 
 export interface FetchModelsResponse {

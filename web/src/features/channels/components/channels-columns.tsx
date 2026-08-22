@@ -76,7 +76,7 @@ import {
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
-import type { Channel } from '../types'
+import type { Channel, ChannelPlanQuota } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
@@ -341,6 +341,14 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [planQuota, setPlanQuota] = useState<ChannelPlanQuota | null>(() => {
+    if (!channel.plan_quota) return null
+    try {
+      return JSON.parse(channel.plan_quota) as ChannelPlanQuota
+    } catch {
+      return null
+    }
+  })
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -461,6 +469,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         void queryClient.invalidateQueries({
           queryKey: channelsQueryKeys.lists(),
         })
+      } else if (response.success && response.plan_quota !== undefined) {
+        setPlanQuota(response.plan_quota)
+        toast.success(t('Plan quota updated'))
+        void queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
       } else if (response.success && response.raw_response !== undefined) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
@@ -474,6 +488,64 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     } finally {
       setIsUpdating(false)
     }
+  }
+
+  if (planQuota) {
+    const visibleItems = planQuota.items.filter(
+      (item) => item.limit > 0 || item.used > 0 || item.percent > 0
+    )
+    const quotaLabel = (item: ChannelPlanQuota['items'][number]) => {
+      const name =
+        item.type === 'TOKENS_LIMIT'
+          ? 'Token'
+          : item.type === 'TIME_LIMIT'
+            ? t('Calls')
+            : item.type
+      if (item.limit <= 0) {
+        return `${name} ${item.percent}%`
+      }
+      return `${name} ${item.used.toLocaleString(locale)} / ${item.limit.toLocaleString(locale)} (${item.percent}%)`
+    }
+
+    return (
+      <TooltipProvider>
+        <div className='-ml-1.5 flex flex-wrap items-center gap-1'>
+          {(visibleItems.length > 0 ? visibleItems : planQuota.items).map(
+            (item, index) => (
+              <Tooltip
+                key={`${item.type}-${item.reset_at ?? index}-${item.limit}`}
+              >
+                <TooltipTrigger
+                  render={
+                    <StatusBadge
+                      label={
+                        sensitiveVisible
+                          ? isUpdating
+                            ? t('Updating...')
+                            : quotaLabel(item)
+                          : SENSITIVE_MASK
+                      }
+                      variant={item.percent >= 90 ? 'danger' : 'info'}
+                      size='sm'
+                      copyable={false}
+                      showDot={false}
+                      className='cursor-pointer'
+                      onClick={handleClickUpdate}
+                    />
+                  }
+                />
+                <TooltipContent>
+                  <p>
+                    {sensitiveVisible ? quotaLabel(item) : SENSITIVE_MASK}
+                  </p>
+                  <p>{t('Click to update balance')}</p>
+                </TooltipContent>
+              </Tooltip>
+            )
+          )}
+        </div>
+      </TooltipProvider>
+    )
   }
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {

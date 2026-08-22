@@ -58,6 +58,76 @@ const maxAdvancedCustomBalanceResponseBytes = 256 << 10
 type channelBalanceResult struct {
 	Balance     float64
 	RawResponse string
+	PlanQuota   *ChannelPlanQuota
+}
+
+type ChannelPlanQuota struct {
+	Items []ChannelPlanQuotaItem `json:"items"`
+}
+
+type ChannelPlanQuotaItem struct {
+	Type      string  `json:"type"`
+	Limit     float64 `json:"limit"`
+	Used      float64 `json:"used"`
+	Remaining float64 `json:"remaining"`
+	Percent   int     `json:"percent"`
+	ResetAt   *int64  `json:"reset_at,omitempty"`
+}
+
+type zaiPlanQuotaResponse struct {
+	Code    int    `json:"code"`
+	Success bool   `json:"success"`
+	Msg     string `json:"msg"`
+	Data    struct {
+		Limits []struct {
+			Type         string  `json:"type"`
+			Unit         float64 `json:"unit"`
+			Number       float64 `json:"number"`
+			Usage        float64 `json:"usage"`
+			CurrentValue float64 `json:"currentValue"`
+			Remaining    float64 `json:"remaining"`
+			Percentage   int     `json:"percentage"`
+			NextResetAt  *int64  `json:"nextResetTime"`
+		} `json:"limits"`
+	} `json:"data"`
+}
+
+func updateZaiPlanQuota(channel *model.Channel) (*ChannelPlanQuota, error) {
+	url := "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+	headers := http.Header{}
+	headers.Set("Authorization", channel.Key)
+	body, err := GetResponseBody(http.MethodGet, url, channel, headers)
+	if err != nil {
+		return nil, err
+	}
+	quota, err := parseZaiPlanQuota(body)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := common.Marshal(quota)
+	if err != nil {
+		return nil, err
+	}
+	channel.UpdatePlanQuota(string(raw))
+	return quota, nil
+}
+
+func parseZaiPlanQuota(body []byte) (*ChannelPlanQuota, error) {
+	var response zaiPlanQuotaResponse
+	if err := common.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	if !response.Success {
+		return nil, fmt.Errorf("ZAI quota query failed: code=%d, message=%s", response.Code, response.Msg)
+	}
+	quota := &ChannelPlanQuota{Items: make([]ChannelPlanQuotaItem, 0, len(response.Data.Limits))}
+	for _, limit := range response.Data.Limits {
+		quota.Items = append(quota.Items, ChannelPlanQuotaItem{
+			Type: limit.Type, Limit: limit.Usage, Used: limit.CurrentValue,
+			Remaining: limit.Remaining, Percent: limit.Percentage, ResetAt: limit.NextResetAt,
+		})
+	}
+	return quota, nil
 }
 
 type OpenAIUsageResponse struct {
@@ -458,6 +528,10 @@ func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) 
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		return fetchAdvancedCustomBalance(channel)
 	}
+	if channel.Type == constant.ChannelTypeZhipu_v4 {
+		quota, err := updateZaiPlanQuota(channel)
+		return channelBalanceResult{PlanQuota: quota}, err
+	}
 	balance, err := updateStandardChannelBalance(channel)
 	return channelBalanceResult{Balance: balance}, err
 }
@@ -555,7 +629,11 @@ func UpdateChannelBalance(c *gin.Context) {
 		"message": "",
 	}
 	if result.RawResponse == "" {
-		response["balance"] = result.Balance
+		if result.PlanQuota != nil {
+			response["plan_quota"] = result.PlanQuota
+		} else {
+			response["balance"] = result.Balance
+		}
 	} else {
 		response["raw_response"] = result.RawResponse
 	}
@@ -581,7 +659,7 @@ func updateAllChannelsBalance() error {
 		result, err := updateChannelBalance(channel)
 		if err != nil {
 			continue
-		} else if result.RawResponse == "" {
+		} else if result.RawResponse == "" && result.PlanQuota == nil {
 			// err is nil & balance <= 0 means quota is used up
 			if result.Balance <= 0 {
 				service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), "余额不足")
