@@ -188,7 +188,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 			return nil, err
 		}
 		return appendToolCallToLastAssistant(messages, toolCall), nil
-	case responsesInputTypeFunctionCallOutput:
+	case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
 		content := responseToolOutputToChatContent(item["output"])
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
@@ -300,17 +300,18 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 }
 
 func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
-	raw, err := kitutil.Marshal(item)
+	arguments, err := kitutil.Marshal(map[string]any{
+		"input": item["input"],
+	})
 	if err != nil {
 		return dto.ToolCallRequest{}, err
 	}
 	return dto.ToolCallRequest{
-		ID:     responsesCallID(item),
-		Type:   dto.CustomType,
-		Custom: raw,
+		ID:   responsesCallID(item),
+		Type: "function",
 		Function: dto.FunctionRequest{
 			Name:      strings.TrimSpace(kitutil.Interface2String(item["name"])),
-			Arguments: responsesArgumentsString(item["input"]),
+			Arguments: string(arguments),
 		},
 	}, nil
 }
@@ -352,15 +353,34 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 			})
 			continue
 		}
-
-		rawTool, err := kitutil.Marshal(tool)
-		if err != nil {
-			return nil, err
+		if toolType == dto.CustomType {
+			name := strings.TrimSpace(kitutil.Interface2String(tool["name"]))
+			if name == "" {
+				continue
+			}
+			description := kitutil.Interface2String(tool["description"])
+			if description != "" {
+				description += "\n\n"
+			}
+			description += "Provide the custom tool input verbatim in the input field."
+			out = append(out, dto.ToolCallRequest{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        name,
+					Description: description,
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"input": map[string]any{"type": "string"},
+						},
+						"required":             []string{"input"},
+						"additionalProperties": false,
+					},
+				},
+			})
 		}
-		out = append(out, dto.ToolCallRequest{
-			Type:   toolType,
-			Custom: rawTool,
-		})
+		// Chat Completions has no lossless equivalent for hosted, MCP,
+		// namespace, or tool-search tools. Do not forward an illegal type.
 	}
 	return out, nil
 }

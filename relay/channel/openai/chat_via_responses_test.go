@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -219,6 +222,67 @@ func TestOaiChatToResponsesStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 		`event: response.function_call_arguments.delta`,
 		`event: response.output_text.done`,
 		`event: response.function_call_arguments.done`,
+		`event: response.completed`,
+	)
+}
+
+func TestOaiChatToResponsesHandlerRestoresCustomTool(t *testing.T) {
+	body := `{"id":"chatcmpl_1","object":"chat.completion","created":1710000000,"model":"glm-test","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_patch","type":"function","function":{"name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`
+
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	service.TrackResponsesCustomTools(c, &dto.OpenAIResponsesRequest{
+		Tools: json.RawMessage(`[{"type":"custom","name":"apply_patch"}]`),
+	})
+
+	usage, err := OaiChatToResponsesHandler(c, info, resp)
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"custom_tool_call"`)
+	require.Contains(t, got, `"name":"apply_patch"`)
+	require.Contains(t, got, `"input":"*** Begin Patch\n*** End Patch"`)
+	require.NotContains(t, got, `"arguments"`)
+}
+
+func TestOaiChatToResponsesStreamHandlerRestoresCustomTool(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"glm-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_patch","type":"function","function":{"name":"apply_patch"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"glm-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"glm-test","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	service.TrackResponsesCustomTools(c, &dto.OpenAIResponsesRequest{
+		Tools: json.RawMessage(`[{"type":"custom","name":"apply_patch"}]`),
+	})
+
+	_, err := OaiChatToResponsesStreamHandler(c, info, resp)
+	require.Nil(t, err)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"custom_tool_call"`)
+	require.Contains(t, got, `event: response.custom_tool_call_input.delta`)
+	require.Contains(t, got, `"delta":"*** Begin Patch\n*** End Patch"`)
+	require.Contains(t, got, `event: response.custom_tool_call_input.done`)
+	require.Contains(t, got, `"input":"*** Begin Patch\n*** End Patch"`)
+	require.NotContains(t, got, `event: response.function_call_arguments.delta`)
+	requireOrderedSubstrings(t, got,
+		`event: response.output_item.added`,
+		`event: response.custom_tool_call_input.delta`,
+		`event: response.custom_tool_call_input.done`,
+		`event: response.output_item.done`,
 		`event: response.completed`,
 	)
 }

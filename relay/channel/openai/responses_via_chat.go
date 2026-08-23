@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,6 +47,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if !ok {
 		return nil, types.NewOpenAIError(fmt.Errorf("expected OpenAI responses response, got %T", convertResult.Value), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	restoreCustomToolsInResponse(c, responsesResp)
 	usage := convertResult.Usage
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(responsesResp)
@@ -78,7 +80,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	streamErr := (*types.NewAPIError)(nil)
 
-	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
+	rawSendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
 		data, err := common.Marshal(event.Payload)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
@@ -86,6 +88,64 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: event.Type}, string(data))
 		return true
+	}
+	customItems := make(map[string]struct{})
+	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
+		itemID := event.Payload.ItemID
+		if itemID == "" && event.Payload.Item != nil {
+			itemID = event.Payload.Item.ID
+		}
+
+		if event.Payload.Item != nil && service.IsResponsesCustomTool(c, event.Payload.Item.Name) {
+			customItems[itemID] = struct{}{}
+		}
+		_, isCustom := customItems[itemID]
+
+		switch event.Type {
+		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			if isCustom {
+				return true
+			}
+		case "response.output_item.added":
+			if isCustom {
+				restoreCustomToolOutput(event.Payload.Item)
+			}
+		case "response.output_item.done":
+			if isCustom {
+				callID := ""
+				if event.Payload.Item != nil {
+					callID = event.Payload.Item.CallId
+				}
+				input := restoreCustomToolOutput(event.Payload.Item)
+				if input != "" && !rawSendEvent(relayconvert.ChatToResponsesStreamEvent{
+					Type: "response.custom_tool_call_input.delta",
+					Payload: dto.ResponsesStreamResponse{
+						Type:        "response.custom_tool_call_input.delta",
+						OutputIndex: event.Payload.OutputIndex,
+						ItemID:      itemID,
+						CallID:      callID,
+						Delta:       input,
+					},
+				}) {
+					return false
+				}
+				if !rawSendEvent(relayconvert.ChatToResponsesStreamEvent{
+					Type: "response.custom_tool_call_input.done",
+					Payload: dto.ResponsesStreamResponse{
+						Type:        "response.custom_tool_call_input.done",
+						OutputIndex: event.Payload.OutputIndex,
+						ItemID:      itemID,
+						CallID:      callID,
+						Input:       input,
+					},
+				}) {
+					return false
+				}
+			}
+		case "response.completed", "response.incomplete":
+			restoreCustomToolsInResponse(c, event.Payload.Response)
+		}
+		return rawSendEvent(event)
 	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
@@ -155,4 +215,44 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 
 	return usage, nil
+}
+
+func restoreCustomToolsInResponse(c *gin.Context, response *dto.OpenAIResponsesResponse) {
+	if response == nil {
+		return
+	}
+	for i := range response.Output {
+		if service.IsResponsesCustomTool(c, response.Output[i].Name) {
+			restoreCustomToolOutput(&response.Output[i])
+		}
+	}
+}
+
+func restoreCustomToolOutput(output *dto.ResponsesOutput) string {
+	if output == nil {
+		return ""
+	}
+	input := customToolInput(output.Arguments)
+	output.Type = "custom_tool_call"
+	output.Arguments = nil
+	if input != "" {
+		if raw, err := common.Marshal(input); err == nil {
+			output.Input = raw
+		}
+	}
+	return input
+}
+
+func customToolInput(arguments json.RawMessage) string {
+	text := dto.ResponsesArgumentsString(arguments)
+	if text == "" {
+		return ""
+	}
+	var object map[string]any
+	if err := common.Unmarshal([]byte(text), &object); err == nil {
+		if input, ok := object["input"].(string); ok {
+			return input
+		}
+	}
+	return text
 }

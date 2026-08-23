@@ -249,12 +249,62 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
 	require.Len(t, got.Messages, 1)
 	toolCalls := got.Messages[0].ParseToolCalls()
 	require.Len(t, toolCalls, 1)
-	assert.Equal(t, dto.CustomType, toolCalls[0].Type)
+	assert.Equal(t, "function", toolCalls[0].Type)
 	assert.Equal(t, "call_custom", toolCalls[0].ID)
 	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
-	assert.Equal(t, "patch body", toolCalls[0].Function.Arguments)
-	assert.Equal(t, "custom_tool_call", gjson.GetBytes(toolCalls[0].Custom, "type").String())
-	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
+	assert.Equal(t, "patch body", gjson.Get(toolCalls[0].Function.Arguments, "input").String())
+}
+
+func TestResponsesRequestToChatCompletionsRequestWrapsCustomToolAndDropsUnsupportedTools(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "glm-test",
+		Input: mustRawMessage(t, "edit the file"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type":        "custom",
+				"name":        "apply_patch",
+				"description": "Apply a patch",
+				"format":      map[string]any{"type": "grammar"},
+			},
+			{"type": "tool_search"},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "apply_patch", got.Tools[0].Function.Name)
+	parameters := got.Tools[0].Function.Parameters.(map[string]any)
+	assert.Equal(t, "object", parameters["type"])
+	properties := parameters["properties"].(map[string]any)
+	assert.Equal(t, "string", properties["input"].(map[string]any)["type"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestConvertsCustomToolOutputHistory(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "glm-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "custom_tool_call",
+				"call_id": "call_patch",
+				"name":    "apply_patch",
+				"input":   "*** Begin Patch\n*** End Patch",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_patch",
+				"output":  "Done!",
+			},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "function", toolCalls[0].Type)
+	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+	assert.Contains(t, toolCalls[0].Function.Arguments, "*** Begin Patch")
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "call_patch", got.Messages[1].ToolCallId)
 }
 
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {

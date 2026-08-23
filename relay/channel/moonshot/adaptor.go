@@ -100,6 +100,7 @@ func isTemperatureOneOnlyModel(model string) bool {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	service.TrackResponsesCustomTools(c, &request)
 	converted, err := service.ResponsesRequestToChatCompletionsRequest(&request)
 	if err != nil {
 		return nil, err
