@@ -582,9 +582,68 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     )
 
     if (layout === 'card') {
+      if (planQuota.items.length === 0) {
+        const isExpired = planQuota.status === 'expired'
+        return (
+          <TooltipProvider>
+            <button
+              type='button'
+              className='border-border/70 bg-muted/20 hover:bg-muted/35 w-full rounded-lg border px-3 py-2.5 text-left transition-colors'
+              onClick={handleClickUpdate}
+              disabled={isUpdating}
+            >
+              <div className='flex flex-wrap items-center justify-between gap-2'>
+                <div className='flex items-center gap-2'>
+                  <span className='text-foreground text-xs font-semibold'>
+                    {planQuota.plan_type || '套餐额度'}
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                      isExpired
+                        ? 'bg-red-500/15 text-red-400'
+                        : 'bg-emerald-500/15 text-emerald-400'
+                    )}
+                  >
+                    {isExpired ? '套餐已过期' : '套餐有效'}
+                  </span>
+                </div>
+                {planQuota.unified_tokens && (
+                  <span className='bg-muted text-muted-foreground rounded px-2 py-1 text-[10px] font-medium'>
+                    统一 Token 计量
+                  </span>
+                )}
+              </div>
+              <div
+                className={cn(
+                  'mt-2 text-xs font-medium',
+                  isExpired ? 'text-red-400' : 'text-foreground'
+                )}
+              >
+                {isExpired ? '当前无有效额度' : '套餐当前有效'}
+              </div>
+              <div className='text-muted-foreground mt-1 text-[11px]'>
+                {planQuota.message || '暂未提供可查询的额度明细'}
+              </div>
+            </button>
+          </TooltipProvider>
+        )
+      }
       return (
         <TooltipProvider>
           <div className='flex w-full flex-col gap-2'>
+            {(planQuota.plan_type || planQuota.parallel_limit) && (
+              <div className='flex items-center justify-between gap-2 px-0.5'>
+                <span className='text-muted-foreground text-[11px] font-medium'>
+                  {planQuota.plan_type}
+                </span>
+                {Boolean(planQuota.parallel_limit) && (
+                  <span className='bg-muted text-muted-foreground rounded px-2 py-1 text-[10px] font-medium tabular-nums'>
+                    并发上限 {planQuota.parallel_limit}
+                  </span>
+                )}
+              </div>
+            )}
             {quotaGroups.map(([type, groupItems]) => (
               <div
                 key={type}

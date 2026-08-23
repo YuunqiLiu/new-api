@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +63,12 @@ type channelBalanceResult struct {
 }
 
 type ChannelPlanQuota struct {
-	Items []ChannelPlanQuotaItem `json:"items"`
+	PlanType      string                 `json:"plan_type,omitempty"`
+	Status        string                 `json:"status,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	UnifiedTokens bool                   `json:"unified_tokens,omitempty"`
+	ParallelLimit float64                `json:"parallel_limit,omitempty"`
+	Items         []ChannelPlanQuotaItem `json:"items"`
 }
 
 type ChannelPlanQuotaItem struct {
@@ -74,6 +80,210 @@ type ChannelPlanQuotaItem struct {
 	Remaining float64 `json:"remaining"`
 	Percent   int     `json:"percent"`
 	ResetAt   *int64  `json:"reset_at,omitempty"`
+}
+
+type kimiCodingUsageResponse struct {
+	Usage struct {
+		Limit     string `json:"limit"`
+		Used      string `json:"used"`
+		ResetTime string `json:"resetTime"`
+	} `json:"usage"`
+	Limits []struct {
+		Window struct {
+			Duration float64 `json:"duration"`
+			TimeUnit string  `json:"timeUnit"`
+		} `json:"window"`
+		Detail struct {
+			Limit     string `json:"limit"`
+			Remaining string `json:"remaining"`
+			ResetTime string `json:"resetTime"`
+		} `json:"detail"`
+	} `json:"limits"`
+	Parallel struct {
+		Limit string `json:"limit"`
+	} `json:"parallel"`
+}
+
+func parseNumericString(value string) (float64, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	return strconv.ParseFloat(value, 64)
+}
+
+func parseISOResetTime(value string) (*int64, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil, err
+	}
+	millis := parsed.UnixMilli()
+	return &millis, nil
+}
+
+func quotaPercent(used, limit float64) int {
+	if limit <= 0 {
+		return 0
+	}
+	return int(math.Round(math.Min(100, math.Max(0, used/limit*100))))
+}
+
+func parseKimiCodingPlanQuota(body []byte) (*ChannelPlanQuota, error) {
+	var response kimiCodingUsageResponse
+	if err := common.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	quota := &ChannelPlanQuota{
+		PlanType: "Kimi Code",
+		Status:   "active",
+		Items:    make([]ChannelPlanQuotaItem, 0, len(response.Limits)+1),
+	}
+	weeklyLimit, err := parseNumericString(response.Usage.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Kimi weekly limit: %w", err)
+	}
+	weeklyUsed, err := parseNumericString(response.Usage.Used)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Kimi weekly usage: %w", err)
+	}
+	weeklyReset, err := parseISOResetTime(response.Usage.ResetTime)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Kimi weekly reset time: %w", err)
+	}
+	if weeklyLimit > 0 || weeklyUsed > 0 {
+		quota.Items = append(quota.Items, ChannelPlanQuotaItem{
+			Type: "TOKENS_LIMIT", Unit: 6, Number: 1,
+			Limit: weeklyLimit, Used: weeklyUsed,
+			Remaining: math.Max(0, weeklyLimit-weeklyUsed),
+			Percent:   quotaPercent(weeklyUsed, weeklyLimit), ResetAt: weeklyReset,
+		})
+	}
+	for _, limit := range response.Limits {
+		absoluteLimit, err := parseNumericString(limit.Detail.Limit)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Kimi window limit: %w", err)
+		}
+		remaining, err := parseNumericString(limit.Detail.Remaining)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Kimi window remaining: %w", err)
+		}
+		resetAt, err := parseISOResetTime(limit.Detail.ResetTime)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Kimi window reset time: %w", err)
+		}
+		used := math.Max(0, absoluteLimit-remaining)
+		unit, number := float64(0), limit.Window.Duration
+		if limit.Window.TimeUnit == "TIME_UNIT_MINUTE" && math.Mod(limit.Window.Duration, 60) == 0 {
+			unit, number = 3, limit.Window.Duration/60
+		}
+		quota.Items = append(quota.Items, ChannelPlanQuotaItem{
+			Type: "TOKENS_LIMIT", Unit: unit, Number: number,
+			Limit: absoluteLimit, Used: used, Remaining: remaining,
+			Percent: quotaPercent(used, absoluteLimit), ResetAt: resetAt,
+		})
+	}
+	quota.ParallelLimit, err = parseNumericString(response.Parallel.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Kimi parallel limit: %w", err)
+	}
+	return quota, nil
+}
+
+func updateKimiCodingPlanQuota(channel *model.Channel) (*ChannelPlanQuota, error) {
+	body, err := GetResponseBody(http.MethodGet, "https://api.kimi.com/coding/v1/usages", channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return nil, err
+	}
+	quota, err := parseKimiCodingPlanQuota(body)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := common.Marshal(quota)
+	if err != nil {
+		return nil, err
+	}
+	channel.UpdatePlanQuota(string(raw))
+	return quota, nil
+}
+
+func isBaiduPersonalTokenPlan(channel *model.Channel) bool {
+	return channel.Type == constant.ChannelTypeCustom &&
+		strings.Contains(strings.ToLower(channel.GetBaseURL()), "/tokenplan/personal/")
+}
+
+func updateBaiduPersonalTokenPlan(channel *model.Channel) (*ChannelPlanQuota, error) {
+	modelName := ""
+	if channel.TestModel != nil {
+		modelName = strings.TrimSpace(*channel.TestModel)
+	}
+	if modelName == "" {
+		models := strings.Split(channel.Models, ",")
+		if len(models) > 0 {
+			modelName = strings.TrimSpace(models[0])
+		}
+	}
+	if modelName == "" {
+		return nil, errors.New("百度 Token Plan 渠道未配置测试模型")
+	}
+	payload, err := common.Marshal(map[string]interface{}{
+		"model":      modelName,
+		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+		"max_tokens": 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequest(http.MethodPost, channel.GetBaseURL(), bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(channel.Key))
+	request.Header.Set("Content-Type", "application/json")
+	client, err := service.GetHttpClientWithProxy(channel.GetSetting().Proxy)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, sanitizeAdvancedCustomRequestError(err, strings.TrimSpace(channel.Key), channel.GetBaseURL())
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxAdvancedCustomBalanceResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	quota := &ChannelPlanQuota{
+		PlanType:      "Token Plan 个人版",
+		UnifiedTokens: true,
+		Items:         []ChannelPlanQuotaItem{},
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		quota.Status = "active"
+		quota.Message = "套餐有效；百度未提供可由此 API Key 查询的公开额度接口"
+	} else {
+		var errorResponse struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := common.Unmarshal(body, &errorResponse); err != nil {
+			return nil, fmt.Errorf("百度 Token Plan 状态查询失败: HTTP %d", response.StatusCode)
+		}
+		if errorResponse.Error.Code != "subscription_expired" {
+			return nil, fmt.Errorf("百度 Token Plan 状态查询失败: %s", errorResponse.Error.Code)
+		}
+		quota.Status = "expired"
+		quota.Message = "当前无有效额度；续费后显示套餐状态"
+	}
+	raw, err := common.Marshal(quota)
+	if err != nil {
+		return nil, err
+	}
+	channel.UpdatePlanQuota(string(raw))
+	return quota, nil
 }
 
 type zaiPlanQuotaResponse struct {
@@ -537,6 +747,14 @@ func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) 
 	}
 	if channel.Type == constant.ChannelTypeZhipu_v4 {
 		quota, err := updateZaiPlanQuota(channel)
+		return channelBalanceResult{PlanQuota: quota}, err
+	}
+	if channel.Type == constant.ChannelTypeMoonshot && channel.GetBaseURL() == "kimi-coding-plan" {
+		quota, err := updateKimiCodingPlanQuota(channel)
+		return channelBalanceResult{PlanQuota: quota}, err
+	}
+	if isBaiduPersonalTokenPlan(channel) {
+		quota, err := updateBaiduPersonalTokenPlan(channel)
 		return channelBalanceResult{PlanQuota: quota}, err
 	}
 	balance, err := updateStandardChannelBalance(channel)

@@ -35,3 +35,31 @@ func TestParseZaiPlanQuotaRejectsFailure(t *testing.T) {
 	_, err := parseZaiPlanQuota([]byte(`{"code":401,"success":false,"msg":"unauthorized"}`))
 	require.ErrorContains(t, err, "unauthorized")
 }
+
+func TestParseKimiCodingPlanQuota(t *testing.T) {
+	body := []byte(`{
+  "usage":{"limit":"100","used":"80","resetTime":"2026-08-25T14:46:41.930671Z"},
+  "limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},"detail":{"limit":"100","remaining":"98","resetTime":"2026-08-23T05:46:41.930671Z"}}],
+  "parallel":{"limit":"30"}
+}`)
+
+	quota, err := parseKimiCodingPlanQuota(body)
+	require.NoError(t, err)
+	require.Equal(t, "Kimi Code", quota.PlanType)
+	require.Equal(t, "active", quota.Status)
+	require.Equal(t, float64(30), quota.ParallelLimit)
+	require.Len(t, quota.Items, 2)
+	require.Equal(t, float64(1), quota.Items[0].Number)
+	require.Equal(t, float64(6), quota.Items[0].Unit)
+	require.Equal(t, 80, quota.Items[0].Percent)
+	require.Equal(t, float64(5), quota.Items[1].Number)
+	require.Equal(t, float64(3), quota.Items[1].Unit)
+	require.Equal(t, float64(2), quota.Items[1].Used)
+	require.Equal(t, 2, quota.Items[1].Percent)
+	require.NotNil(t, quota.Items[1].ResetAt)
+}
+
+func TestParseKimiCodingPlanQuotaRejectsBadNumber(t *testing.T) {
+	_, err := parseKimiCodingPlanQuota([]byte(`{"usage":{"limit":"bad","used":"1"}}`))
+	require.ErrorContains(t, err, "weekly limit")
+}

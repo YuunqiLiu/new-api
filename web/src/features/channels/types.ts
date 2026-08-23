@@ -46,6 +46,11 @@ export const channelPlanQuotaItemSchema = z.object({
 })
 
 export const channelPlanQuotaSchema = z.object({
+  plan_type: z.string().optional(),
+  status: z.string().optional(),
+  message: z.string().optional(),
+  unified_tokens: z.boolean().optional(),
+  parallel_limit: z.number().optional(),
   items: z.array(channelPlanQuotaItemSchema),
 })
 
