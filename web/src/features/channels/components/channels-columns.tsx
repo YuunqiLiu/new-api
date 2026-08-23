@@ -56,7 +56,11 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn, truncateText } from '@/lib/utils'
 
 import { getCodexUsage, updateChannelBalance } from '../api'
-import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
+import {
+  CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_DEEPSEEK,
+  MODEL_FETCHABLE_TYPES,
+} from '../constants'
 import {
   formatRelativeTime,
   formatResponseTime,
@@ -350,6 +354,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
   })
   const currencyLabel = getCurrencyLabel()
+  const balanceIsNativeCNY = channel.type === CHANNEL_TYPE_DEEPSEEK
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
@@ -370,8 +375,19 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       showSymbol: layout !== 'card',
     })
   )
+  const formatNativeCNYBalance = (compact = false) =>
+    new Intl.NumberFormat(locale, {
+      style: layout === 'card' ? 'decimal' : 'currency',
+      currency: 'CNY',
+      currencyDisplay: 'narrowSymbol',
+      notation: compact ? 'compact' : 'standard',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: compact ? 1 : balance >= 1 ? 2 : 4,
+    }).format(balance)
   const remainingFull = withSuffix(
-    formatCurrencyFromUSD(balance, balanceFormatOptions)
+    balanceIsNativeCNY
+      ? formatNativeCNYBalance()
+      : formatCurrencyFromUSD(balance, balanceFormatOptions)
   )
   const usedDisplay =
     usedFull.length > MAX_INLINE_BALANCE_CHARS
@@ -386,11 +402,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const remainingDisplay =
     remainingFull.length > MAX_INLINE_BALANCE_CHARS
       ? withSuffix(
-          formatCurrencyFromUSD(balance, {
-            compact: true,
-            locale,
-            showSymbol: layout !== 'card',
-          })
+          balanceIsNativeCNY
+            ? formatNativeCNYBalance(true)
+            : formatCurrencyFromUSD(balance, {
+                compact: true,
+                locale,
+                showSymbol: layout !== 'card',
+              })
         )
       : remainingFull
   const usedLabel = `${t('Used:')} ${usedFull}`
