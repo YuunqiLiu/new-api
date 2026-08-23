@@ -5,10 +5,23 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestKimiCodingPlanResponsesUsesChatCompletionsURL(t *testing.T) {
+	info := newKimiResponsesRelayInfo("k3")
+	info.ChannelBaseUrl = "kimi-coding-plan"
+	info.RelayFormat = types.RelayFormatOpenAIResponses
+	info.RelayMode = relayconstant.RelayModeResponses
+
+	requestURL, err := (&Adaptor{}).GetRequestURL(info)
+	require.NoError(t, err)
+	require.Equal(t, "https://api.kimi.com/coding/v1/chat/completions", requestURL)
+}
 
 func newKimiResponsesRelayInfo(model string) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
