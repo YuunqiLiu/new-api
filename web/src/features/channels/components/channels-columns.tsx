@@ -53,7 +53,7 @@ import {
   getCurrencyLabel,
 } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
-import { truncateText } from '@/lib/utils'
+import { cn, truncateText } from '@/lib/utils'
 
 import { getCodexUsage, updateChannelBalance } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
@@ -498,13 +498,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     const quotaTypeLabel = (type: string) => {
       if (type === 'TOKENS_LIMIT') return 'Token'
       if (type === 'CREDIT_LIMIT') return 'Credit'
-      if (type === 'TIME_LIMIT') return 'MCP'
+      if (type === 'TIME_LIMIT') return 'MCP 调用'
       return type.replace(/_LIMIT$/, '')
     }
     const quotaPeriodLabel = (item: ChannelPlanQuota['items'][number]) => {
-      if (item.unit === 3 && item.number === 5) return '5h'
-      if (item.unit === 6 && item.number === 1) return t('Weekly')
-      if (item.unit === 5 && item.number === 1) return t('Monthly')
+      if (item.unit === 3 && item.number === 5) return '5 小时'
+      if (item.unit === 6 && item.number === 1) return '每周'
+      if (item.unit === 5 && item.number === 1) return '每月'
       return item.number > 0 ? `${item.number} × ${item.unit}` : '-'
     }
     const quotaUsageLabel = (item: ChannelPlanQuota['items'][number]) => {
@@ -526,6 +526,128 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         return groups
       }, new Map<string, ChannelPlanQuota['items']>())
     )
+
+    const formatResetAt = (resetAt: number | null | undefined) => {
+      if (!resetAt) return '重置时间未提供'
+      const resetDate = new Date(resetAt)
+      if (Number.isNaN(resetDate.getTime())) {
+        return '重置时间未提供'
+      }
+      const month = resetDate.getMonth() + 1
+      const day = resetDate.getDate()
+      const hour = String(resetDate.getHours()).padStart(2, '0')
+      const minute = String(resetDate.getMinutes()).padStart(2, '0')
+      return `${month}月${day}日 ${hour}:${minute} 重置`
+    }
+    const progressColor = (percent: number) => {
+      if (percent >= 90) return 'bg-red-500'
+      if (percent >= 75) return 'bg-amber-500'
+      return 'bg-sky-500'
+    }
+    const quotaTypeOrder: Record<string, number> = {
+      TOKENS_LIMIT: 0,
+      CREDIT_LIMIT: 1,
+      TIME_LIMIT: 2,
+    }
+    const quotaPeriodOrder = (item: ChannelPlanQuota['items'][number]) => {
+      if (item.unit === 3 && item.number === 5) return 0
+      if (item.unit === 6 && item.number === 1) return 1
+      if (item.unit === 5 && item.number === 1) return 2
+      return 3
+    }
+    quotaGroups.sort(
+      ([typeA], [typeB]) =>
+        (quotaTypeOrder[typeA] ?? 99) - (quotaTypeOrder[typeB] ?? 99)
+    )
+    quotaGroups.forEach(([, groupItems]) =>
+      groupItems.sort((a, b) => quotaPeriodOrder(a) - quotaPeriodOrder(b))
+    )
+
+    if (layout === 'card') {
+      return (
+        <TooltipProvider>
+          <div className='flex w-full flex-col gap-2'>
+            {quotaGroups.map(([type, groupItems]) => (
+              <div
+                key={type}
+                className='border-border/70 bg-muted/20 rounded-lg border px-3 py-2.5'
+              >
+                <div className='text-foreground mb-2 text-xs font-semibold'>
+                  {quotaTypeLabel(type)}
+                </div>
+                <div className='divide-border/60 flex flex-col divide-y'>
+                  {groupItems.map((item, index) => {
+                    const percent = Math.min(100, Math.max(0, item.percent))
+                    const resetLabel = formatResetAt(item.reset_at)
+                    const hasAbsoluteLimit = item.limit > 0
+                    return (
+                      <Tooltip
+                        key={`${item.type}-${item.reset_at ?? index}-${item.limit}`}
+                      >
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type='button'
+                              className='hover:bg-muted/35 w-full rounded-md py-2 text-left transition-colors first:pt-0 last:pb-0'
+                              onClick={handleClickUpdate}
+                              disabled={isUpdating}
+                            >
+                              <div className='flex items-center gap-3'>
+                                <span className='bg-muted text-muted-foreground w-14 shrink-0 rounded-md px-2 py-1 text-center text-xs font-medium'>
+                                  {quotaPeriodLabel(item)}
+                                </span>
+                                <div className='bg-muted h-1.5 min-w-0 flex-1 overflow-hidden rounded-full'>
+                                  <div
+                                    className={cn(
+                                      'h-full rounded-full transition-all',
+                                      progressColor(percent)
+                                    )}
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                                <span
+                                  className={cn(
+                                    'w-10 shrink-0 text-right text-xs font-semibold tabular-nums',
+                                    percent >= 90
+                                      ? 'text-red-500'
+                                      : percent >= 75
+                                        ? 'text-amber-500'
+                                        : 'text-foreground'
+                                  )}
+                                >
+                                  {sensitiveVisible
+                                    ? `${percent}%`
+                                    : SENSITIVE_MASK}
+                                </span>
+                              </div>
+                              <div className='mt-1.5 flex items-center justify-between gap-3 pl-[4.25rem] text-[11px] tabular-nums'>
+                                <span className='text-muted-foreground'>
+                                  {hasAbsoluteLimit
+                                    ? sensitiveVisible
+                                      ? `${t('Used:')} ${item.used.toLocaleString(locale)} / ${item.limit.toLocaleString(locale)}`
+                                      : SENSITIVE_MASK
+                                    : ''}
+                                </span>
+                                <span className='text-muted-foreground shrink-0 text-right'>
+                                  {resetLabel}
+                                </span>
+                              </div>
+                            </button>
+                          }
+                        />
+                        <TooltipContent>
+                          <p>{t('Click to update balance')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </TooltipProvider>
+      )
+    }
 
     return (
       <TooltipProvider>

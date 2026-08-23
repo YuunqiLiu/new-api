@@ -66,6 +66,7 @@ function ChannelCardComponent({
   }
 
   const groups = parseGroupsList(row.original.group ?? '')
+  const hasPlanQuota = Boolean(row.original.plan_quota)
 
   const selectCell = renderCell('select')
   const typeCell = renderCell('type')
@@ -108,8 +109,8 @@ function ChannelCardComponent({
           </div>
         </div>
 
-        {/* Body: left column (id/name + balance) paired with a right-aligned
-          column (priority/weight + response/test time). */}
+        {/* Body: channel identity paired with operational stats. Plan quota
+          channels render their richer quota panel at full card width below. */}
         <div className='flex items-start justify-between gap-3'>
           {/* Left column */}
           <div className='flex min-w-0 flex-1 flex-col gap-3 overflow-hidden'>
@@ -121,16 +122,18 @@ function ChannelCardComponent({
               )}
               {nameCell}
             </div>
-            <div className='min-w-0'>
-              <div className={cn('mb-1', labelClass)}>
-                {fieldLabels.balance}
+            {!hasPlanQuota && (
+              <div className='min-w-0'>
+                <div className={cn('mb-1', labelClass)}>
+                  {fieldLabels.balance}
+                </div>
+                <div className='min-w-0 overflow-hidden text-sm'>
+                  {balanceCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </div>
               </div>
-              <div className='min-w-0 overflow-hidden text-sm'>
-                {balanceCell ?? (
-                  <span className='text-muted-foreground'>-</span>
-                )}
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Right column (sits on the right, content left-aligned). A single
@@ -155,6 +158,13 @@ function ChannelCardComponent({
             </div>
           </div>
         </div>
+
+        {hasPlanQuota && (
+          <div className='min-w-0'>
+            <div className={cn('mb-1.5', labelClass)}>{t('Quota')}</div>
+            <div className='min-w-0 text-sm'>{balanceCell}</div>
+          </div>
+        )}
 
         {/* Last row: groups span the full width, showing every group (no label) */}
         <div className='min-w-0'>
