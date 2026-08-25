@@ -165,7 +165,7 @@ func (s *ChatToResponsesStreamState) appendTextDelta(delta string) []ChatToRespo
 }
 
 func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatToResponsesStreamEvent {
-	events := make([]ChatToResponsesStreamEvent, 0, 2)
+	events := make([]ChatToResponsesStreamEvent, 0, 3)
 	if !s.reasoningStarted {
 		s.reasoningStarted = true
 		s.reasoningIndex = s.nextIndex("reasoning", -1)
@@ -177,6 +177,16 @@ func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatTo
 				ID:      s.reasoningID(),
 				Status:  "in_progress",
 				Content: []dto.ResponsesOutputContent{},
+			},
+		}))
+		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryPartAdded, dto.ResponsesStreamResponse{
+			Type:         responsesEventReasoningSummaryPartAdded,
+			OutputIndex:  intPtr(s.reasoningIndex),
+			SummaryIndex: intPtr(0),
+			ItemID:       s.reasoningID(),
+			Part: &dto.ResponsesReasoningSummaryPart{
+				Type: "summary_text",
+				Text: "",
 			},
 		}))
 	}
@@ -262,6 +272,16 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
 		s.reasoningDone = true
 		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryDone, dto.ResponsesStreamResponse{
 			Type:         responsesEventReasoningSummaryDone,
+			OutputIndex:  intPtr(s.reasoningIndex),
+			SummaryIndex: intPtr(0),
+			ItemID:       s.reasoningID(),
+			Part: &dto.ResponsesReasoningSummaryPart{
+				Type: "summary_text",
+				Text: s.reasoning.String(),
+			},
+		}))
+		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryPartDone, dto.ResponsesStreamResponse{
+			Type:         responsesEventReasoningSummaryPartDone,
 			OutputIndex:  intPtr(s.reasoningIndex),
 			SummaryIndex: intPtr(0),
 			ItemID:       s.reasoningID(),
