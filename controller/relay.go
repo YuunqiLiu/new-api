@@ -188,12 +188,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
 	}
+	retryPolicy := newRelayRetryPolicy()
+	retryParam.ExcludedChannelIds = retryPolicy.excludedChannels
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
-		relayInfo.RetryIndex = retryParam.GetRetry()
-		channel, channelErr := getChannel(c, relayInfo, retryParam)
+	var forcedChannelId int
+	for attempt := 0; ; attempt++ {
+		retryParam.SetRetry(0)
+		relayInfo.RetryIndex = attempt
+		var channel *model.Channel
+		var channelErr *types.NewAPIError
+		if forcedChannelId != 0 {
+			channel, channelErr = getSpecificRetryChannel(c, relayInfo, forcedChannelId)
+		} else {
+			channel, channelErr = getChannel(c, relayInfo, retryParam)
+		}
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
@@ -229,6 +239,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			if retryPolicy.channelSwitches > 0 {
+				service.RecordChannelAffinity(c, channel.Id)
+			}
 			relayInfo.LastError = nil
 			return
 		}
@@ -238,9 +251,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetry(c, newAPIError, 1) {
 			break
 		}
+		if retryPolicy.retrySameChannel(newAPIError) {
+			forcedChannelId = channel.Id
+			time.Sleep(retryPolicy.markSameChannelRetry())
+			continue
+		}
+		if !retryPolicy.canSwitchChannel() {
+			break
+		}
+		retryPolicy.switchChannel(channel.Id)
+		service.ClearCurrentChannelAffinityCache(c)
+		forcedChannelId = 0
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -253,6 +277,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+func getSpecificRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, channelId int) (*model.Channel, *types.NewAPIError) {
+	channel, err := model.CacheGetChannel(channelId)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeGetChannelFailed)
+	}
+	if newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName); newAPIError != nil {
+		return nil, newAPIError
+	}
+	return channel, nil
 }
 
 var upgrader = websocket.Upgrader{
