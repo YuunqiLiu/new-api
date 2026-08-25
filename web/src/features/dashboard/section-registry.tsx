@@ -45,11 +45,17 @@ const DASHBOARD_SECTIONS = [
     adminOnly: true,
     build: () => null,
   },
+  {
+    id: 'prompt-cache',
+    titleKey: 'Prompt Cache Monitoring',
+    adminOnly: true,
+    build: () => null,
+  },
 ] as const
 
 export type DashboardSectionId = (typeof DASHBOARD_SECTIONS)[number]['id']
 
-const ADMIN_ONLY_SECTIONS = new Set<string>(['users'])
+const ADMIN_ONLY_SECTIONS = new Set<string>(['users', 'prompt-cache'])
 
 const dashboardRegistry = createSectionRegistry<
   DashboardSectionId,

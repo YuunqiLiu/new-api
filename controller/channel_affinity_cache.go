@@ -2,8 +2,10 @@ package controller
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -85,4 +87,16 @@ func GetChannelAffinityUsageCacheStats(c *gin.Context) {
 		"message": "",
 		"data":    stats,
 	})
+}
+
+func GetPromptCacheMonitoring(c *gin.Context) {
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	report, err := service.GetPromptCacheMonitoringReport(service.PromptCacheMonitoringRequest{
+		Window: c.DefaultQuery("window", "24h"), Model: c.Query("model"), Channel: channel,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": report})
 }

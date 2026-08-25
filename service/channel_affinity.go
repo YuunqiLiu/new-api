@@ -54,6 +54,7 @@ type channelAffinityMeta struct {
 	UsingGroup     string
 	ModelName      string
 	RequestPath    string
+	CacheHit       bool
 }
 
 type ChannelAffinityStatsContext struct {
@@ -616,6 +617,9 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			return 0, false
 		}
 		if found {
+			meta, _ := getChannelAffinityMeta(c)
+			meta.CacheHit = true
+			setChannelAffinityContext(c, meta)
 			return channelID, true
 		}
 		return 0, false
@@ -693,8 +697,8 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 		"key_source":     meta.KeySourceType,
 		"key_key":        meta.KeySourceKey,
 		"key_path":       meta.KeySourcePath,
-		"key_hint":       meta.KeyHint,
 		"key_fp":         meta.KeyFingerprint,
+		"routing":        map[bool]string{true: "affinity_hit", false: "cold_start"}[meta.CacheHit],
 	}
 	c.Set(ginKeyChannelAffinityLogInfo, info)
 }

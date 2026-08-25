@@ -162,6 +162,9 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+		// Record the routing outcome for both affinity hits and cold starts. This
+		// is admin-only consume-log metadata and contains only the key fingerprint.
+		service.MarkChannelAffinityUsed(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), channel.Id)
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {

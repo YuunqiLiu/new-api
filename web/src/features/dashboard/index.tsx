@@ -38,6 +38,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
+import { PromptCacheMonitoring } from './components/prompt-cache-monitoring'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
   buildDefaultDashboardFilters,
@@ -189,6 +190,7 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
   users: {
     titleKey: 'User Analytics',
   },
+  'prompt-cache': { titleKey: 'Prompt Cache Monitoring' },
 }
 
 export function Dashboard() {
@@ -248,7 +250,7 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) => section !== 'overview' && (section !== 'users' || isAdmin) && (section !== 'prompt-cache' || isAdmin)
       ),
     [isAdmin]
   )
@@ -410,6 +412,7 @@ export function Dashboard() {
               </Suspense>
             </FadeIn>
           )}
+          {activeSection === 'prompt-cache' && isAdmin && <FadeIn><PromptCacheMonitoring /></FadeIn>}
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
