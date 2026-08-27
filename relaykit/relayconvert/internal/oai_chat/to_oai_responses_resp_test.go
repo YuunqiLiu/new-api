@@ -155,6 +155,9 @@ func TestChatCompletionsReasoningStreamEmitsSummaryPartLifecycle(t *testing.T) {
 	require.Len(t, events, 7)
 	assert.Equal(t, responsesEventCreated, events[0].Type)
 	assert.Equal(t, responsesEventOutputItemAdded, events[1].Type)
+	require.NotNil(t, events[1].Payload.Item)
+	require.NotNil(t, events[1].Payload.Item.Summary)
+	assert.Empty(t, *events[1].Payload.Item.Summary)
 	assert.Equal(t, responsesEventReasoningSummaryPartAdded, events[2].Type)
 	require.NotNil(t, events[2].Payload.Part)
 	assert.Equal(t, "summary_text", events[2].Payload.Part.Type)
@@ -162,8 +165,32 @@ func TestChatCompletionsReasoningStreamEmitsSummaryPartLifecycle(t *testing.T) {
 	assert.Equal(t, responsesEventReasoningSummaryDelta, events[3].Type)
 	assert.Equal(t, "thinking", events[3].Payload.Delta)
 	assert.Equal(t, responsesEventReasoningSummaryDone, events[4].Type)
+	assert.Equal(t, "thinking", events[4].Payload.Text)
+	assert.Nil(t, events[4].Payload.Part)
 	assert.Equal(t, responsesEventReasoningSummaryPartDone, events[5].Type)
 	require.NotNil(t, events[5].Payload.Part)
 	assert.Equal(t, "thinking", events[5].Payload.Part.Text)
 	assert.Equal(t, responsesEventOutputItemDone, events[6].Type)
+	require.NotNil(t, events[6].Payload.Item)
+	require.NotNil(t, events[6].Payload.Item.Summary)
+	require.Len(t, *events[6].Payload.Item.Summary, 1)
+	assert.Equal(t, "thinking", (*events[6].Payload.Item.Summary)[0].Text)
+}
+
+func TestChatCompletionsResponseUsesReasoningSummaryField(t *testing.T) {
+	chat := &dto.OpenAITextResponse{
+		Id:    "chatcmpl_reasoning",
+		Model: "test-model",
+		Choices: []dto.OpenAITextResponseChoice{{
+			Message: dto.Message{Role: "assistant", Content: "final", ReasoningContent: lo.ToPtr("reasoning")},
+		}},
+	}
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(chat, "resp_reasoning")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 2)
+	require.NotNil(t, resp.Output[1].Summary)
+	require.Len(t, *resp.Output[1].Summary, 1)
+	assert.Equal(t, "reasoning", (*resp.Output[1].Summary)[0].Text)
+	assert.Empty(t, resp.Output[1].Content)
 }

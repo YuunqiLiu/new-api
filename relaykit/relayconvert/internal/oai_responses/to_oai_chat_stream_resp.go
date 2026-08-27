@@ -179,9 +179,18 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 			chunks = append(chunks, s.textDelta(text.String())...)
 		case out.Type == responsesOutputTypeReasoning && !s.hasSentReasoning:
 			var reasoning strings.Builder
-			for _, c := range out.Content {
-				if c.Text != "" {
-					reasoning.WriteString(c.Text)
+			if out.Summary != nil {
+				for _, part := range *out.Summary {
+					if part.Text != "" {
+						reasoning.WriteString(part.Text)
+					}
+				}
+			} else {
+				// Accept legacy gateway responses that encoded summaries as content.
+				for _, c := range out.Content {
+					if c.Text != "" {
+						reasoning.WriteString(c.Text)
+					}
 				}
 			}
 			chunks = append(chunks, s.reasoningDelta(reasoning.String())...)

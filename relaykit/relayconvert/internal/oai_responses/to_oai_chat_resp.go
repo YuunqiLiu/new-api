@@ -219,6 +219,15 @@ func ExtractReasoningTextFromResponses(resp *dto.OpenAIResponsesResponse) string
 		if out.Type != responsesOutputTypeReasoning {
 			continue
 		}
+		if out.Summary != nil {
+			for _, part := range *out.Summary {
+				if part.Text != "" {
+					sb.WriteString(part.Text)
+				}
+			}
+			continue
+		}
+		// Accept legacy gateway responses that encoded summaries as content.
 		for _, c := range out.Content {
 			if c.Text != "" {
 				sb.WriteString(c.Text)

@@ -15,6 +15,7 @@ const (
 	responsesInputTypeFunctionCallOutput = "function_call_output"
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
+	responsesInputTypeReasoning          = "reasoning"
 )
 
 const (
@@ -176,6 +177,12 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 	switch itemType {
+	case responsesInputTypeReasoning:
+		// Reasoning items are output-side metadata carried forward by stateless
+		// Responses clients. Chat Completions has no equivalent input message.
+		// Treating one as a default user item creates an empty user prompt and
+		// breaks tool-result continuations on providers that validate prompts.
+		return messages, nil
 	case responsesInputTypeFunctionCall:
 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
 		if err != nil {

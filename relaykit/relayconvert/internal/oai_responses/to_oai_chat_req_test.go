@@ -161,6 +161,42 @@ func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoe
 	assert.JSONEq(t, `{"ok":true}`, got.Messages[1].StringContent())
 }
 
+func TestResponsesRequestToChatCompletionsRequestIgnoresReasoningItemBeforeToolOutput(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"role":    "user",
+				"content": []map[string]any{{"type": "input_text", "text": "run pwd"}},
+			},
+			{
+				"type":    "reasoning",
+				"summary": []map[string]any{{"type": "summary_text", "text": "I should call the tool."}},
+			},
+			{
+				"type":      "function_call",
+				"call_id":   "call_1",
+				"name":      "shell",
+				"arguments": `{"cmd":"pwd"}`,
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_1",
+				"output":  "/tmp",
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "user", got.Messages[0].Role)
+	assert.Equal(t, "run pwd", got.Messages[0].StringContent())
+	assert.Equal(t, "assistant", got.Messages[1].Role)
+	require.Len(t, got.Messages[1].ParseToolCalls(), 1)
+	assert.Equal(t, "tool", got.Messages[2].Role)
+	assert.Equal(t, "/tmp", got.Messages[2].StringContent())
+}
+
 func TestResponsesRequestToChatCompletionsRequestOnlyFunctionCallCreatesAssistant(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",

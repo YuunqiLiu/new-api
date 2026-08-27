@@ -56,7 +56,7 @@ func TestResponsesResponseToChatCompletionsPreservesReasoningSummary(t *testing.
 		Output: []dto.ResponsesOutput{
 			{
 				Type: responsesOutputTypeReasoning,
-				Content: []dto.ResponsesOutputContent{
+				Summary: &[]dto.ResponsesReasoningSummaryPart{
 					{Type: "summary_text", Text: "first summary"},
 					{Type: "summary_text", Text: "\n\nsecond summary"},
 				},
@@ -75,6 +75,26 @@ func TestResponsesResponseToChatCompletionsPreservesReasoningSummary(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, "first summary\n\nsecond summary", chat.Choices[0].Message.GetReasoningContent())
 	assert.Equal(t, "final", chat.Choices[0].Message.StringContent())
+}
+
+func TestResponsesResponseToChatCompletionsAcceptsLegacyReasoningContent(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		ID:     "resp_legacy",
+		Model:  "gpt-test",
+		Status: []byte(`"completed"`),
+		Output: []dto.ResponsesOutput{
+			{
+				Type: responsesOutputTypeReasoning,
+				Content: []dto.ResponsesOutputContent{
+					{Type: "summary_text", Text: "legacy summary"},
+				},
+			},
+		},
+	}
+
+	chat, _, err := ResponsesResponseToChatCompletionsResponse(resp, "chatcmpl_legacy")
+	require.NoError(t, err)
+	assert.Equal(t, "legacy summary", chat.Choices[0].Message.GetReasoningContent())
 }
 
 func TestResponsesFinishReasonFromIncompleteStatus(t *testing.T) {
@@ -279,6 +299,30 @@ func TestResponsesStreamEventToChatChunksUsesTerminalDoneOutput(t *testing.T) {
 	assert.Equal(t, `{"q":"x"}`, tool.Function.Arguments)
 	require.NotNil(t, chunks[3].Choices[0].FinishReason)
 	assert.Equal(t, "tool_calls", *chunks[3].Choices[0].FinishReason)
+}
+
+func TestResponsesStreamEventToChatChunksUsesTerminalReasoningSummary(t *testing.T) {
+	state := newTestResponsesStreamState()
+	chunks := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventDone,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: []dto.ResponsesOutput{
+				{
+					Type: responsesOutputTypeReasoning,
+					Summary: &[]dto.ResponsesReasoningSummaryPart{
+						{Type: "summary_text", Text: "terminal reasoning"},
+					},
+				},
+			},
+		},
+	})
+
+	require.Len(t, chunks, 3)
+	assert.Equal(t, "assistant", chunks[0].Choices[0].Delta.Role)
+	assert.Equal(t, "terminal reasoning", chunks[1].Choices[0].Delta.GetReasoningContent())
+	require.NotNil(t, chunks[2].Choices[0].FinishReason)
+	assert.Equal(t, "stop", *chunks[2].Choices[0].FinishReason)
 }
 
 func TestResponsesStreamEventToChatChunksDoesNotResendToolOnTerminalOutput(t *testing.T) {
