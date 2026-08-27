@@ -757,6 +757,10 @@ func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) 
 		quota, err := updateBaiduPersonalTokenPlan(channel)
 		return channelBalanceResult{PlanQuota: quota}, err
 	}
+	if isAliyunTokenPlan(channel) {
+		quota, err := updateAliyunTokenPlanQuota(channel)
+		return channelBalanceResult{PlanQuota: quota}, err
+	}
 	balance, err := updateStandardChannelBalance(channel)
 	return channelBalanceResult{Balance: balance}, err
 }
