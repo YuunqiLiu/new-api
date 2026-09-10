@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -108,7 +109,66 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err != nil {
 		return nil, err
 	}
+	if converted.Model == "glm-5.3-flash" {
+		normalizeGLM53FlashDeveloperMessages(converted)
+	}
 	return a.ConvertOpenAIRequest(c, info, converted)
+}
+
+// normalizeGLM53FlashDeveloperMessages adapts the OpenAI developer role to the
+// single system-message contract enforced by the GLM-5.3-Flash upstream.
+func normalizeGLM53FlashDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+	if request == nil {
+		return
+	}
+
+	hasDeveloper := false
+	systemContent := make([]string, 0, 1)
+	developerContent := make([]string, 0, 1)
+	firstTargetIndex := -1
+	var mergedMessage dto.Message
+	hasOriginalSystem := false
+	for i, message := range request.Messages {
+		switch message.Role {
+		case "system":
+			if firstTargetIndex == -1 {
+				firstTargetIndex = i
+			}
+			if !hasOriginalSystem {
+				mergedMessage = message
+				hasOriginalSystem = true
+			}
+			systemContent = append(systemContent, message.StringContent())
+		case "developer":
+			hasDeveloper = true
+			if firstTargetIndex == -1 {
+				firstTargetIndex = i
+			}
+			if !hasOriginalSystem && len(developerContent) == 0 {
+				mergedMessage = message
+			}
+			developerContent = append(developerContent, message.StringContent())
+		}
+	}
+	if !hasDeveloper {
+		return
+	}
+
+	mergedContent := append(systemContent, developerContent...)
+	mergedMessage.Role = "system"
+	mergedMessage.SetStringContent(strings.Join(mergedContent, "\n\n"))
+
+	messages := make([]dto.Message, 0, len(request.Messages)-len(systemContent)-len(developerContent)+1)
+	for i, message := range request.Messages {
+		if i == firstTargetIndex {
+			messages = append(messages, mergedMessage)
+		}
+		if message.Role == "system" || message.Role == "developer" {
+			continue
+		}
+		messages = append(messages, message)
+	}
+	request.Messages = messages
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
