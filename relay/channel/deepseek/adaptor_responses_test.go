@@ -45,6 +45,61 @@ func TestResponsesCustomExecUsesChatBridge(t *testing.T) {
 	require.Equal(t, "https://api.deepseek.com/v1/chat/completions", requestURL)
 }
 
+func TestResponsesCustomExecNormalizesDeveloperRoleForChatBridge(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{"role":"developer","content":[{"type":"input_text","text":"Follow the user instruction."}]},
+			{"role":"user","content":[{"type":"input_text","text":"Use exec."}]}
+		],
+		"tools":[{"type":"custom","name":"exec","description":"Run a command"}]
+	}`), &request))
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "deepseek-v4-flash"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 2)
+	require.Equal(t, "system", chatRequest.Messages[0].Role)
+	require.Equal(t, "user", chatRequest.Messages[1].Role)
+}
+
+func TestResponsesCustomExecRestoresReasoningForToolContinuation(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{"role":"developer","content":[{"type":"input_text","text":"Use exec."}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"I should call exec."}]},
+			{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"echo OK"},
+			{"type":"custom_tool_call_output","call_id":"call_1","output":"OK"}
+		],
+		"tools":[{"type":"custom","name":"exec","description":"Run a command"}]
+	}`), &request))
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "deepseek-v4-flash"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 3)
+	require.Equal(t, "system", chatRequest.Messages[0].Role)
+	require.Equal(t, "assistant", chatRequest.Messages[1].Role)
+	require.Equal(t, "I should call exec.", chatRequest.Messages[1].GetReasoningContent())
+	require.Equal(t, "tool", chatRequest.Messages[2].Role)
+	require.Equal(t, "call_1", chatRequest.Messages[2].ToolCallId)
+}
+
 func TestResponsesApplyPatchOnlyKeepsNativeEndpoint(t *testing.T) {
 	var request dto.OpenAIResponsesRequest
 	require.NoError(t, common.Unmarshal([]byte(`{

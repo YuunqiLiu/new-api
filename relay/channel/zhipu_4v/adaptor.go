@@ -89,6 +89,20 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	modelName := request.Model
+	if info != nil && info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		modelName = info.UpstreamModelName
+	}
+	if modelName == "glm-5.3" || modelName == "glm-5.3-flash" {
+		switch request.ReasoningEffort {
+		case "", "low", "high", "max":
+		default:
+			return nil, fmt.Errorf("reasoning_effort %q is not supported by %s; use low, high, or max", request.ReasoningEffort, modelName)
+		}
+		if info != nil {
+			info.SetReasoningEffort(request.ReasoningEffort)
+		}
+	}
 	if lo.FromPtrOr(request.TopP, 0) >= 1 {
 		request.TopP = lo.ToPtr(0.99)
 	}

@@ -169,6 +169,10 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		if err != nil {
 			return nil, err
 		}
+		normalizeDeepSeekDeveloperMessages(converted)
+		if err := restoreDeepSeekToolReasoning(&request, converted); err != nil {
+			return nil, err
+		}
 		// DeepSeek's native Responses endpoint currently accepts only the
 		// apply_patch custom tool. Route mixed/arbitrary custom tools through
 		// Chat Completions, whose function-tool contract supports them, and let
@@ -177,6 +181,66 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		return converted, nil
 	}
 	return request, nil
+}
+
+func restoreDeepSeekToolReasoning(request *dto.OpenAIResponsesRequest, converted *dto.GeneralOpenAIRequest) error {
+	if request == nil || converted == nil || len(request.Input) == 0 {
+		return nil
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(request.Input, &items); err != nil {
+		return nil
+	}
+	reasoningByCallID := make(map[string]string)
+	pendingReasoning := ""
+	for _, item := range items {
+		switch strings.TrimSpace(fmt.Sprint(item["type"])) {
+		case "reasoning":
+			var parts []map[string]any
+			if summary, ok := item["summary"]; ok {
+				summaryBytes, err := common.Marshal(summary)
+				if err != nil {
+					return fmt.Errorf("marshal reasoning summary: %w", err)
+				}
+				if err := common.Unmarshal(summaryBytes, &parts); err != nil {
+					return fmt.Errorf("parse reasoning summary: %w", err)
+				}
+			}
+			texts := make([]string, 0, len(parts))
+			for _, part := range parts {
+				if text := strings.TrimSpace(fmt.Sprint(part["text"])); text != "" {
+					texts = append(texts, text)
+				}
+			}
+			pendingReasoning = strings.Join(texts, "\n")
+		case "function_call", "custom_tool_call":
+			if callID := strings.TrimSpace(fmt.Sprint(item["call_id"])); callID != "" && pendingReasoning != "" {
+				reasoningByCallID[callID] = pendingReasoning
+			}
+		case "function_call_output", "custom_tool_call_output":
+			pendingReasoning = ""
+		}
+	}
+	for i := range converted.Messages {
+		for _, toolCall := range converted.Messages[i].ParseToolCalls() {
+			if reasoningContent := reasoningByCallID[toolCall.ID]; reasoningContent != "" {
+				converted.Messages[i].ReasoningContent = &reasoningContent
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeDeepSeekDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+	if request == nil {
+		return
+	}
+	for i := range request.Messages {
+		if request.Messages[i].Role == "developer" {
+			request.Messages[i].Role = "system"
+		}
+	}
 }
 
 func deepSeekNeedsCustomToolBridge(request *dto.OpenAIResponsesRequest) bool {

@@ -52,6 +52,43 @@ func TestConvertOpenAIResponsesRequestPreservesTools(t *testing.T) {
 	require.Len(t, chatRequest.Tools, 1)
 }
 
+func TestConvertOpenAIResponsesRequestPreservesGLM53ReasoningEffort(t *testing.T) {
+	for _, model := range []string{"glm-5.3", "glm-5.3-flash"} {
+		t.Run(model, func(t *testing.T) {
+			var request dto.OpenAIResponsesRequest
+			require.NoError(t, common.Unmarshal([]byte(`{
+				"model":"`+model+`",
+				"input":"Reply exactly OK",
+				"reasoning":{"effort":"high"}
+			}`), &request))
+
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: model}}
+			converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+			require.NoError(t, err)
+			chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Equal(t, "high", chatRequest.ReasoningEffort)
+			require.Equal(t, "high", info.GetReasoningEffort())
+		})
+	}
+}
+
+func TestConvertOpenAIResponsesRequestRejectsUnsupportedGLM53ReasoningEffort(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"glm-5.3",
+		"input":"Reply exactly OK",
+		"reasoning":{"effort":"medium"}
+	}`), &request))
+
+	_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(
+		&gin.Context{},
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "glm-5.3"}},
+		request,
+	)
+	require.ErrorContains(t, err, "use low, high, or max")
+}
+
 func TestConvertOpenAIResponsesRequestNormalizesDeveloperForGLM53Flash(t *testing.T) {
 	var request dto.OpenAIResponsesRequest
 	require.NoError(t, common.Unmarshal([]byte(`{
