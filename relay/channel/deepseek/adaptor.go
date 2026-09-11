@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
 )
@@ -160,9 +161,36 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	return nil, errors.New("not implemented")
 }
 
-func (a *Adaptor) ConvertOpenAIResponsesRequest(_ *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	applyDeepSeekV4ResponsesThinkingSuffix(info, &request)
+	if deepSeekNeedsCustomToolBridge(&request) {
+		service.TrackResponsesCustomTools(c, &request)
+		converted, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+		if err != nil {
+			return nil, err
+		}
+		// DeepSeek's native Responses endpoint currently accepts only the
+		// apply_patch custom tool. Route mixed/arbitrary custom tools through
+		// Chat Completions, whose function-tool contract supports them, and let
+		// the Responses response handler restore the original custom tool type.
+		info.RelayMode = constant.RelayModeChatCompletions
+		return converted, nil
+	}
 	return request, nil
+}
+
+func deepSeekNeedsCustomToolBridge(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil {
+		return false
+	}
+	for _, tool := range request.GetToolsMap() {
+		toolType, _ := tool["type"].(string)
+		name, _ := tool["name"].(string)
+		if toolType == dto.CustomType && name != "apply_patch" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyDeepSeekV4ResponsesThinkingSuffix(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) {
@@ -197,6 +225,15 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		adaptor := claude.Adaptor{}
+		return adaptor.DoResponse(c, resp, info)
+	case types.RelayFormatOpenAIResponses:
+		if info.RelayMode == constant.RelayModeChatCompletions {
+			if info.IsStream {
+				return openai.OaiChatToResponsesStreamHandler(c, info, resp)
+			}
+			return openai.OaiChatToResponsesHandler(c, info, resp)
+		}
+		adaptor := openai.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	default:
 		adaptor := openai.Adaptor{}
