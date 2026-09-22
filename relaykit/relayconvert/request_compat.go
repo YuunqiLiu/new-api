@@ -39,6 +39,16 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	return oairesponses.ResponsesRequestToChatCompletionsRequest(req)
 }
 
+// ResponsesToChatOptions controls the compatibility handling applied while a
+// Responses history is lowered to Chat Completions.  It is deliberately
+// exposed at the relayconvert boundary so channel adaptors do not need to
+// import the internal converter package.
+type ResponsesToChatOptions = oairesponses.ResponsesToChatOptions
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesToChatOptions) (*dto.GeneralOpenAIRequest, error) {
+	return oairesponses.ResponsesRequestToChatCompletionsRequestWithOptions(req, options)
+}
+
 func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto.ClaudeRequest, error) {
 	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, info, req)
 }

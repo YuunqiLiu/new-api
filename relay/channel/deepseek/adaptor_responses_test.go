@@ -100,6 +100,86 @@ func TestResponsesCustomExecRestoresReasoningForToolContinuation(t *testing.T) {
 	require.Equal(t, "call_1", chatRequest.Messages[2].ToolCallId)
 }
 
+func TestResponsesCustomExecMergesMultipleOutputsForOneCallID(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{"role":"user","content":"run exec"},
+			{"type":"reasoning","summary":[]},
+			{"type":"custom_tool_call","call_id":"call_exec","name":"exec","input":"echo OK"},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":"part one"},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":"part two"}
+		],
+		"tools":[{"type":"custom","name":"exec","description":"Run a command"}]
+	}`), &request))
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "deepseek-v4-flash"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 3)
+	require.Equal(t, "assistant", chatRequest.Messages[1].Role)
+	require.Equal(t, "tool", chatRequest.Messages[2].Role)
+	require.Equal(t, "call_exec", chatRequest.Messages[2].ToolCallId)
+	require.Equal(t, "part one\npart two", chatRequest.Messages[2].StringContent())
+	require.NotNil(t, chatRequest.Messages[1].ReasoningContent)
+}
+
+func TestResponsesCustomExecHistorySelectsChatBridgeWithoutToolDeclaration(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{"type":"custom_tool_call","call_id":"call_exec","name":"exec","input":"echo OK"},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":"OK"}
+		]
+	}`), &request))
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "deepseek-v4-flash"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 2)
+	require.Equal(t, relayconstant.RelayModeChatCompletions, info.RelayMode)
+}
+
+func TestResponsesApplyPatchDuplicateOutputsUseChatBridge(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{"type":"custom_tool_call","call_id":"call_patch","name":"apply_patch","input":"patch"},
+			{"type":"custom_tool_call_output","id":"output_1","call_id":"call_patch","output":"part one"},
+			{"type":"custom_tool_call_output","id":"output_2","call_id":"call_patch","output":"part two"}
+		],
+		"tools":[{"type":"custom","name":"apply_patch","description":"Apply a patch"}]
+	}`), &request))
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "deepseek-v4-flash"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(&gin.Context{}, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 2)
+	require.Equal(t, relayconstant.RelayModeChatCompletions, info.RelayMode)
+	require.Equal(t, "part one\npart two", chatRequest.Messages[1].StringContent())
+}
+
 func TestResponsesApplyPatchOnlyKeepsNativeEndpoint(t *testing.T) {
 	var request dto.OpenAIResponsesRequest
 	require.NoError(t, common.Unmarshal([]byte(`{

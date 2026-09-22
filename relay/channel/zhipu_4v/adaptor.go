@@ -14,6 +14,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/samber/lo"
@@ -119,7 +120,10 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	service.TrackResponsesCustomTools(c, &request)
-	converted, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+	converted, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, relayconvert.ResponsesToChatOptions{
+		NormalizeToolHistory:  true,
+		PreserveToolReasoning: true,
+	})
 	if err != nil {
 		return nil, err
 	}

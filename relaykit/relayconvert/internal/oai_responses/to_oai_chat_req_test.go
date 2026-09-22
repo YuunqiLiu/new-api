@@ -343,6 +343,82 @@ func TestResponsesRequestToChatCompletionsRequestConvertsCustomToolOutputHistory
 	assert.Equal(t, "call_patch", got.Messages[1].ToolCallId)
 }
 
+func TestResponsesRequestToChatCompletionsRequestWithOptionsMergesIncrementalOutputs(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{"role": "user", "content": "run both tools"},
+			{"type": "reasoning", "summary": []map[string]any{{"type": "summary_text", "text": "plan"}}},
+			{"type": "custom_tool_call", "id": "item_call_exec", "call_id": "call_exec", "name": "exec", "input": "echo one"},
+			{"type": "custom_tool_call", "id": "item_call_patch", "call_id": "call_patch", "name": "apply_patch", "input": "patch"},
+			{"type": "custom_tool_call_output", "id": "item_output_patch", "call_id": "call_patch", "output": "patch part 1"},
+			{"type": "custom_tool_call_output", "id": "item_output_exec_1", "call_id": "call_exec", "output": "exec part 1"},
+			{"type": "custom_tool_call_output", "id": "item_output_exec_2", "call_id": "call_exec", "output": "exec part 2"},
+			{"role": "user", "content": "continue"},
+		}),
+	}, ResponsesToChatOptions{NormalizeToolHistory: true, PreserveToolReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 5)
+	assert.Equal(t, "user", got.Messages[0].Role)
+	assert.Equal(t, "assistant", got.Messages[1].Role)
+	toolCalls := got.Messages[1].ParseToolCalls()
+	require.Len(t, toolCalls, 2)
+	assert.Equal(t, "call_exec", toolCalls[0].ID)
+	assert.Equal(t, "call_patch", toolCalls[1].ID)
+	assert.Equal(t, "plan", got.Messages[1].GetReasoningContent())
+	assert.Equal(t, "tool", got.Messages[2].Role)
+	assert.Equal(t, "call_exec", got.Messages[2].ToolCallId)
+	assert.Equal(t, "exec part 1\nexec part 2", got.Messages[2].StringContent())
+	assert.Equal(t, "tool", got.Messages[3].Role)
+	assert.Equal(t, "call_patch", got.Messages[3].ToolCallId)
+	assert.Equal(t, "patch part 1", got.Messages[3].StringContent())
+	assert.Equal(t, "user", got.Messages[4].Role)
+	assert.Equal(t, "continue", got.Messages[4].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestWithOptionsPreservesEmptyReasoning(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "deepseek-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "reasoning", "summary": []map[string]any{}},
+			{"type": "function_call", "call_id": "call_empty", "name": "exec", "arguments": "{}"},
+			{"type": "function_call_output", "call_id": "call_empty", "output": "ok"},
+		}),
+	}, ResponsesToChatOptions{NormalizeToolHistory: true, PreserveToolReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.NotNil(t, got.Messages[0].ReasoningContent)
+	assert.Equal(t, "", *got.Messages[0].ReasoningContent)
+}
+
+func TestResponsesRequestToChatCompletionsRequestWithOptionsPreservesReasoningContentAlias(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "deepseek-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "reasoning", "reasoning_content": "keep this reasoning"},
+			{"type": "custom_tool_call", "call_id": "call_alias", "name": "exec", "input": "true"},
+			{"type": "custom_tool_call_output", "call_id": "call_alias", "output": "ok"},
+		}),
+	}, ResponsesToChatOptions{NormalizeToolHistory: true, PreserveToolReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	assert.Equal(t, "keep this reasoning", got.Messages[0].GetReasoningContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestWithOptionsKeepsOutputContentParts(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_parts", "name": "exec", "arguments": "{}"},
+			{"type": "function_call_output", "call_id": "call_parts", "output": []map[string]any{{"type": "output_text", "text": "done"}}},
+		}),
+	}, ResponsesToChatOptions{NormalizeToolHistory: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	assert.Equal(t, "done", got.Messages[1].StringContent())
+}
+
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
 	tests := []struct {
 		name string

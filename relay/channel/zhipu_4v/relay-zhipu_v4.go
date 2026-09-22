@@ -28,10 +28,12 @@ func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIReq
 			message.SetMediaContent(mediaMessages)
 		}
 		messages = append(messages, dto.Message{
-			Role:       message.Role,
-			Content:    message.Content,
-			ToolCalls:  message.ToolCalls,
-			ToolCallId: message.ToolCallId,
+			Role:             message.Role,
+			Content:          message.Content,
+			ReasoningContent: message.ReasoningContent,
+			Reasoning:        message.Reasoning,
+			ToolCalls:        message.ToolCalls,
+			ToolCallId:       message.ToolCallId,
 		})
 	}
 	str, ok := request.Stop.(string)

@@ -25,7 +25,25 @@ const (
 	ResponsesInputTypeCustomToolOutput   = responsesInputTypeCustomToolOutput
 )
 
+// ResponsesToChatOptions controls compatibility normalization when a
+// Responses request is sent to a Chat Completions-only provider.  The
+// normalization is opt-in because providers that natively understand the
+// Responses item stream should receive the original history unchanged.
+type ResponsesToChatOptions struct {
+	// NormalizeToolHistory coalesces multiple output items for one call_id and
+	// puts each logical tool call immediately before its merged output.
+	NormalizeToolHistory bool
+	// PreserveToolReasoning carries a reasoning item associated with a tool call
+	// into the assistant message as reasoning_content.  A present-but-empty
+	// reasoning item is preserved as a non-nil empty string.
+	PreserveToolReasoning bool
+}
+
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesToChatOptions{})
+}
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesToChatOptions) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -36,71 +54,87 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		return nil, err
 	}
 
-	messages, err := responsesRequestMessagesToChat(req)
+	workingRequest := req
+	if options.NormalizeToolHistory {
+		normalizedInput, err := normalizeResponsesToolHistory(req.Input)
+		if err != nil {
+			return nil, err
+		}
+		copyRequest := *req
+		copyRequest.Input = normalizedInput
+		workingRequest = &copyRequest
+	}
+
+	messages, err := responsesRequestMessagesToChat(workingRequest)
+	if err != nil {
+		return nil, err
+	}
+	if options.PreserveToolReasoning {
+		if err := applyResponsesToolReasoning(req.Input, messages); err != nil {
+			return nil, err
+		}
+	}
+
+	tools, err := responsesRequestToolsToChat(workingRequest.Tools)
 	if err != nil {
 		return nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools)
+	toolChoice, err := responsesRequestToolChoiceToChat(workingRequest.ToolChoice)
 	if err != nil {
 		return nil, err
 	}
 
-	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice)
-	if err != nil {
-		return nil, err
-	}
-
-	responseFormat, err := responsesRequestTextToChatResponseFormat(req.Text)
+	responseFormat, err := responsesRequestTextToChatResponseFormat(workingRequest.Text)
 	if err != nil {
 		return nil, err
 	}
 
 	out := &dto.GeneralOpenAIRequest{
-		Model:                req.Model,
+		Model:                workingRequest.Model,
 		Messages:             messages,
-		Stream:               req.Stream,
-		StreamOptions:        req.StreamOptions,
-		MaxCompletionTokens:  req.MaxOutputTokens,
-		Temperature:          req.Temperature,
-		TopP:                 req.TopP,
-		TopLogProbs:          req.TopLogProbs,
+		Stream:               workingRequest.Stream,
+		StreamOptions:        workingRequest.StreamOptions,
+		MaxCompletionTokens:  workingRequest.MaxOutputTokens,
+		Temperature:          workingRequest.Temperature,
+		TopP:                 workingRequest.TopP,
+		TopLogProbs:          workingRequest.TopLogProbs,
 		ResponseFormat:       responseFormat,
 		Tools:                tools,
 		ToolChoice:           toolChoice,
-		User:                 req.User,
-		Store:                req.Store,
-		Metadata:             req.Metadata,
-		SafetyIdentifier:     req.SafetyIdentifier,
-		PromptCacheRetention: req.PromptCacheRetention,
-		EnableThinking:       req.EnableThinking,
-		ThinkingBudget:       req.ThinkingBudget,
+		User:                 workingRequest.User,
+		Store:                workingRequest.Store,
+		Metadata:             workingRequest.Metadata,
+		SafetyIdentifier:     workingRequest.SafetyIdentifier,
+		PromptCacheRetention: workingRequest.PromptCacheRetention,
+		EnableThinking:       workingRequest.EnableThinking,
+		ThinkingBudget:       workingRequest.ThinkingBudget,
 	}
 
-	out.FrequencyPenalty, err = responsesRawFloat(req.FrequencyPenalty)
+	out.FrequencyPenalty, err = responsesRawFloat(workingRequest.FrequencyPenalty)
 	if err != nil {
 		return nil, fmt.Errorf("invalid frequency_penalty: %w", err)
 	}
-	out.PresencePenalty, err = responsesRawFloat(req.PresencePenalty)
+	out.PresencePenalty, err = responsesRawFloat(workingRequest.PresencePenalty)
 	if err != nil {
 		return nil, fmt.Errorf("invalid presence_penalty: %w", err)
 	}
 
-	if req.Reasoning != nil {
-		out.ReasoningEffort = req.Reasoning.Effort
+	if workingRequest.Reasoning != nil {
+		out.ReasoningEffort = workingRequest.Reasoning.Effort
 	}
-	if req.ServiceTier != "" {
-		out.ServiceTier, _ = kitutil.Marshal(req.ServiceTier)
+	if workingRequest.ServiceTier != "" {
+		out.ServiceTier, _ = kitutil.Marshal(workingRequest.ServiceTier)
 	}
-	if len(req.ParallelToolCalls) > 0 && kitutil.GetJsonType(req.ParallelToolCalls) == "boolean" {
+	if len(workingRequest.ParallelToolCalls) > 0 && kitutil.GetJsonType(workingRequest.ParallelToolCalls) == "boolean" {
 		var parallelToolCalls bool
-		if err := kitutil.Unmarshal(req.ParallelToolCalls, &parallelToolCalls); err == nil {
+		if err := kitutil.Unmarshal(workingRequest.ParallelToolCalls, &parallelToolCalls); err == nil {
 			out.ParallelTooCalls = &parallelToolCalls
 		}
 	}
-	if len(req.PromptCacheKey) > 0 && kitutil.GetJsonType(req.PromptCacheKey) == "string" {
+	if len(workingRequest.PromptCacheKey) > 0 && kitutil.GetJsonType(workingRequest.PromptCacheKey) == "string" {
 		var promptCacheKey string
-		if err := kitutil.Unmarshal(req.PromptCacheKey, &promptCacheKey); err == nil {
+		if err := kitutil.Unmarshal(workingRequest.PromptCacheKey, &promptCacheKey); err == nil {
 			out.PromptCacheKey = promptCacheKey
 		}
 	}
@@ -130,6 +164,295 @@ func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesReque
 
 func ValidateRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error {
 	return validateResponsesRequestChatUnsupportedFields(req)
+}
+
+type responsesToolHistoryCall struct {
+	outputItems  []map[string]any
+	outputValues []any
+}
+
+type responsesToolReasoning struct {
+	present bool
+	text    string
+}
+
+// normalizeResponsesToolHistory turns the incremental tool-output history
+// emitted by Code Mode into the single-result shape expected by Chat
+// Completions providers.  It deliberately keys by call_id (the logical tool
+// invocation) rather than item id (the individual history item).
+func normalizeResponsesToolHistory(raw json.RawMessage) (json.RawMessage, error) {
+	if !rawJSONPresent(raw) || kitutil.GetJsonType(raw) != "array" {
+		return raw, nil
+	}
+
+	var items []map[string]any
+	if err := kitutil.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("invalid responses input array: %w", err)
+	}
+
+	calls := make(map[string]*responsesToolHistoryCall)
+	callOrder := make([]string, 0)
+	callIDsSeen := make(map[string]struct{})
+	for _, item := range items {
+		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+		if itemType != responsesInputTypeFunctionCall && itemType != responsesInputTypeCustomToolCall {
+			continue
+		}
+		callID := responsesCallID(item)
+		if callID == "" {
+			return nil, errors.New("tool call item is missing call_id")
+		}
+		if _, exists := callIDsSeen[callID]; exists {
+			return nil, fmt.Errorf("duplicate tool call for call_id %s", callID)
+		}
+		callIDsSeen[callID] = struct{}{}
+		calls[callID] = &responsesToolHistoryCall{}
+		callOrder = append(callOrder, callID)
+	}
+
+	for _, item := range items {
+		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+		if itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
+			continue
+		}
+		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
+		if callID == "" {
+			return nil, errors.New("tool output item is missing call_id")
+		}
+		call, ok := calls[callID]
+		if !ok {
+			return nil, fmt.Errorf("tool output has no matching call_id %s", callID)
+		}
+		call.outputItems = append(call.outputItems, item)
+		call.outputValues = append(call.outputValues, item["output"])
+	}
+
+	mergedOutput := make(map[string]map[string]any, len(calls))
+	for _, callID := range callOrder {
+		call := calls[callID]
+		if len(call.outputItems) == 0 {
+			continue
+		}
+		first := cloneResponsesItem(call.outputItems[0])
+		first["output"] = mergeResponsesToolOutputValues(call.outputValues)
+		// Preserve the terminal status when Code Mode supplied one on a later
+		// incremental item.  Chat providers do not use it, but keeping it makes
+		// the normalized history deterministic for callers that inspect it.
+		for i := len(call.outputItems) - 1; i >= 0; i-- {
+			if status := strings.TrimSpace(kitutil.Interface2String(call.outputItems[i]["status"])); status != "" {
+				first["status"] = status
+				break
+			}
+		}
+		mergedOutput[callID] = first
+	}
+
+	// Rebuild the stream while keeping non-tool items in order.  Once a tool
+	// round starts, interleaved context is held until all known outputs for that
+	// round have been emitted, guaranteeing call/output adjacency.  Outputs
+	// are emitted in first-call order even if their fragments arrived
+	// interleaved.
+	normalized := make([]map[string]any, 0, len(items))
+	pendingCalls := make([]string, 0)
+	deferred := make([]map[string]any, 0)
+	emittedOutputs := make(map[string]struct{})
+	flush := func() {
+		if len(pendingCalls) == 0 {
+			return
+		}
+		for _, callID := range pendingCalls {
+			if output, ok := mergedOutput[callID]; ok {
+				normalized = append(normalized, output)
+				emittedOutputs[callID] = struct{}{}
+			}
+		}
+		pendingCalls = pendingCalls[:0]
+		if len(deferred) > 0 {
+			normalized = append(normalized, deferred...)
+			deferred = deferred[:0]
+		}
+	}
+
+	for _, item := range items {
+		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+		switch itemType {
+		case responsesInputTypeFunctionCall, responsesInputTypeCustomToolCall:
+			callID := responsesCallID(item)
+			normalized = append(normalized, item)
+			pendingCalls = append(pendingCalls, callID)
+		case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
+			callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
+			if _, emitted := emittedOutputs[callID]; !emitted {
+				flush()
+			}
+		default:
+			if len(pendingCalls) > 0 {
+				deferred = append(deferred, item)
+			} else {
+				normalized = append(normalized, item)
+			}
+		}
+	}
+	flush()
+
+	result, err := kitutil.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal normalized responses input: %w", err)
+	}
+	return result, nil
+}
+
+func cloneResponsesItem(item map[string]any) map[string]any {
+	copy := make(map[string]any, len(item))
+	for key, value := range item {
+		copy[key] = value
+	}
+	return copy
+}
+
+func mergeResponsesToolOutputValues(values []any) any {
+	if len(values) == 1 {
+		return values[0]
+	}
+	allText := true
+	textParts := make([]string, 0, len(values))
+	for _, value := range values {
+		switch typed := value.(type) {
+		case nil:
+			textParts = append(textParts, "")
+		case string:
+			textParts = append(textParts, typed)
+		default:
+			allText = false
+		}
+	}
+	if allText {
+		return strings.Join(textParts, "\n")
+	}
+
+	parts := make([]any, 0)
+	for index, value := range values {
+		if index > 0 {
+			parts = append(parts, map[string]any{"type": "input_text", "text": "\n"})
+		}
+		switch typed := value.(type) {
+		case []any:
+			parts = append(parts, typed...)
+		case []map[string]any:
+			for _, part := range typed {
+				parts = append(parts, part)
+			}
+		case string:
+			parts = append(parts, map[string]any{"type": "input_text", "text": typed})
+		case nil:
+			parts = append(parts, map[string]any{"type": "input_text", "text": ""})
+		default:
+			if raw, err := kitutil.Marshal(typed); err == nil {
+				parts = append(parts, map[string]any{"type": "input_text", "text": string(raw)})
+			} else {
+				parts = append(parts, map[string]any{"type": "input_text", "text": fmt.Sprint(typed)})
+			}
+		}
+	}
+	return parts
+}
+
+// applyResponsesToolReasoning keeps the reasoning metadata that belongs to a
+// tool-call round.  The normal Responses-to-Chat conversion intentionally
+// ignores reasoning items because Chat Completions has no standalone
+// reasoning item.  Providers that validate or use reasoning_content for tool
+// continuations can opt in through ResponsesToChatOptions instead.
+func applyResponsesToolReasoning(raw json.RawMessage, messages []dto.Message) error {
+	if !rawJSONPresent(raw) || kitutil.GetJsonType(raw) != "array" {
+		return nil
+	}
+	var items []map[string]any
+	if err := kitutil.Unmarshal(raw, &items); err != nil {
+		return fmt.Errorf("invalid responses reasoning history: %w", err)
+	}
+
+	reasoningByCallID := make(map[string]responsesToolReasoning)
+	pending := responsesToolReasoning{}
+	for _, item := range items {
+		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+		switch itemType {
+		case responsesInputTypeReasoning:
+			// A reasoning item may carry summary (the public Responses shape),
+			// content, or an empty array.  Presence is meaningful even when no
+			// plaintext is available (for example encrypted reasoning).
+			pending.present = true
+			texts := make([]string, 0)
+			for _, key := range []string{"summary", "content", "text", "reasoning_content", "reasoning_text"} {
+				if value, ok := item[key]; ok {
+					texts = append(texts, responsesReasoningTexts(value)...)
+				}
+			}
+			if len(texts) > 0 {
+				text := strings.Join(texts, "\n")
+				if pending.text == "" {
+					pending.text = text
+				} else {
+					pending.text += "\n" + text
+				}
+			}
+		case responsesInputTypeFunctionCall, responsesInputTypeCustomToolCall:
+			if callID := responsesCallID(item); callID != "" && pending.present {
+				reasoningByCallID[callID] = pending
+			}
+		case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
+			// Once a tool result starts, a following reasoning item belongs to a
+			// later round rather than the call that just completed.
+			pending = responsesToolReasoning{}
+		}
+	}
+
+	for i := range messages {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		for _, toolCall := range messages[i].ParseToolCalls() {
+			if reasoning, ok := reasoningByCallID[toolCall.ID]; ok && reasoning.present {
+				text := reasoning.text
+				messages[i].ReasoningContent = &text
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func responsesReasoningTexts(value any) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return []string{typed}
+	case []any:
+		texts := make([]string, 0)
+		for _, part := range typed {
+			texts = append(texts, responsesReasoningTexts(part)...)
+		}
+		return texts
+	case []map[string]any:
+		texts := make([]string, 0)
+		for _, part := range typed {
+			texts = append(texts, responsesReasoningTexts(part)...)
+		}
+		return texts
+	case map[string]any:
+		if text, ok := typed["text"].(string); ok {
+			return []string{text}
+		}
+		texts := make([]string, 0)
+		for _, key := range []string{"summary_text", "reasoning_text", "content"} {
+			if nested, ok := typed[key]; ok {
+				texts = append(texts, responsesReasoningTexts(nested)...)
+			}
+		}
+		return texts
+	default:
+		return nil
+	}
 }
 
 func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Message, error) {
@@ -554,6 +877,18 @@ func responseToolOutputToChatContent(value any) any {
 		return ""
 	case string:
 		return v
+	case []any:
+		if content, err := responsesContentPartsToChatContent(v); err == nil {
+			return content
+		}
+	case []map[string]any:
+		parts := make([]any, 0, len(v))
+		for _, part := range v {
+			parts = append(parts, part)
+		}
+		if content, err := responsesContentPartsToChatContent(parts); err == nil {
+			return content
+		}
 	default:
 		raw, err := kitutil.Marshal(v)
 		if err != nil {
@@ -561,6 +896,12 @@ func responseToolOutputToChatContent(value any) any {
 		}
 		return string(raw)
 	}
+
+	raw, err := kitutil.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(raw)
 }
 
 func responsesRawFloat(raw json.RawMessage) (*float64, error) {

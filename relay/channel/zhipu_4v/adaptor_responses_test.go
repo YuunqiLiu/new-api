@@ -166,3 +166,32 @@ func TestConvertOpenAIResponsesRequestPreservesToolContinuationForGLM53Flash(t *
 	require.Len(t, toolCalls, 1)
 	require.Equal(t, "call_123", toolCalls[0].ID)
 }
+
+func TestConvertOpenAIResponsesRequestMergesIncrementalToolOutputsForGLM(t *testing.T) {
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"glm-5.3",
+		"input":[
+			{"role":"user","content":"run the tool"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"select tool"}]},
+			{"type":"function_call","call_id":"call_123","name":"exec","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_123","output":"part one"},
+			{"type":"function_call_output","call_id":"call_123","output":"part two"}
+		],
+		"tools":[{"type":"function","name":"exec","parameters":{"type":"object"}}]
+	}`), &request))
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(
+		&gin.Context{},
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "glm-5.3"}},
+		request,
+	)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatRequest.Messages, 3)
+	require.Equal(t, "select tool", chatRequest.Messages[1].GetReasoningContent())
+	require.Equal(t, "tool", chatRequest.Messages[2].Role)
+	require.Equal(t, "call_123", chatRequest.Messages[2].ToolCallId)
+	require.Equal(t, "part one\npart two", chatRequest.Messages[2].StringContent())
+}

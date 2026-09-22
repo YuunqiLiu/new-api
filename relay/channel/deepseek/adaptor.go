@@ -14,6 +14,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/reasoning"
@@ -165,14 +166,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	applyDeepSeekV4ResponsesThinkingSuffix(info, &request)
 	if deepSeekNeedsCustomToolBridge(&request) {
 		service.TrackResponsesCustomTools(c, &request)
-		converted, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+		converted, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, relayconvert.ResponsesToChatOptions{
+			NormalizeToolHistory:  true,
+			PreserveToolReasoning: true,
+		})
 		if err != nil {
 			return nil, err
 		}
 		normalizeDeepSeekDeveloperMessages(converted)
-		if err := restoreDeepSeekToolReasoning(&request, converted); err != nil {
-			return nil, err
-		}
 		// DeepSeek's native Responses endpoint currently accepts only the
 		// apply_patch custom tool. Route mixed/arbitrary custom tools through
 		// Chat Completions, whose function-tool contract supports them, and let
@@ -182,56 +183,6 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	return request, nil
 }
-
-func restoreDeepSeekToolReasoning(request *dto.OpenAIResponsesRequest, converted *dto.GeneralOpenAIRequest) error {
-	if request == nil || converted == nil || len(request.Input) == 0 {
-		return nil
-	}
-	var items []map[string]any
-	if err := common.Unmarshal(request.Input, &items); err != nil {
-		return nil
-	}
-	reasoningByCallID := make(map[string]string)
-	pendingReasoning := ""
-	for _, item := range items {
-		switch strings.TrimSpace(fmt.Sprint(item["type"])) {
-		case "reasoning":
-			var parts []map[string]any
-			if summary, ok := item["summary"]; ok {
-				summaryBytes, err := common.Marshal(summary)
-				if err != nil {
-					return fmt.Errorf("marshal reasoning summary: %w", err)
-				}
-				if err := common.Unmarshal(summaryBytes, &parts); err != nil {
-					return fmt.Errorf("parse reasoning summary: %w", err)
-				}
-			}
-			texts := make([]string, 0, len(parts))
-			for _, part := range parts {
-				if text := strings.TrimSpace(fmt.Sprint(part["text"])); text != "" {
-					texts = append(texts, text)
-				}
-			}
-			pendingReasoning = strings.Join(texts, "\n")
-		case "function_call", "custom_tool_call":
-			if callID := strings.TrimSpace(fmt.Sprint(item["call_id"])); callID != "" && pendingReasoning != "" {
-				reasoningByCallID[callID] = pendingReasoning
-			}
-		case "function_call_output", "custom_tool_call_output":
-			pendingReasoning = ""
-		}
-	}
-	for i := range converted.Messages {
-		for _, toolCall := range converted.Messages[i].ParseToolCalls() {
-			if reasoningContent := reasoningByCallID[toolCall.ID]; reasoningContent != "" {
-				converted.Messages[i].ReasoningContent = &reasoningContent
-				break
-			}
-		}
-	}
-	return nil
-}
-
 func normalizeDeepSeekDeveloperMessages(request *dto.GeneralOpenAIRequest) {
 	if request == nil {
 		return
@@ -251,6 +202,46 @@ func deepSeekNeedsCustomToolBridge(request *dto.OpenAIResponsesRequest) bool {
 		toolType, _ := tool["type"].(string)
 		name, _ := tool["name"].(string)
 		if toolType == dto.CustomType && name != "apply_patch" {
+			return true
+		}
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(request.Input, &items); err != nil {
+		return false
+	}
+	customCallNames := make(map[string]string)
+	for _, item := range items {
+		itemType := strings.TrimSpace(fmt.Sprint(item["type"]))
+		if itemType != "custom_tool_call" {
+			continue
+		}
+		callID := strings.TrimSpace(fmt.Sprint(item["call_id"]))
+		if callID == "" {
+			callID = strings.TrimSpace(fmt.Sprint(item["id"]))
+		}
+		name := strings.TrimSpace(fmt.Sprint(item["name"]))
+		customCallNames[callID] = name
+		if name != "" && name != "apply_patch" {
+			return true
+		}
+	}
+	customOutputCounts := make(map[string]int)
+	for _, item := range items {
+		if strings.TrimSpace(fmt.Sprint(item["type"])) != "custom_tool_call_output" {
+			continue
+		}
+		callID := strings.TrimSpace(fmt.Sprint(item["call_id"]))
+		customOutputCounts[callID]++
+		if customOutputCounts[callID] > 1 {
+			// Multiple output fragments for one logical call_id need the
+			// compatibility bridge even for apply_patch; the native endpoint
+			// may validate each item as a duplicate tool result.
+			return true
+		}
+		if customCallNames[callID] != "apply_patch" {
+			// An output without a known apply_patch call is conservatively
+			// bridged so arbitrary Code Mode tools cannot reach the native
+			// endpoint and fail after partial history processing.
 			return true
 		}
 	}
