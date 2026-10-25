@@ -1,10 +1,13 @@
 # NexEvic 运维源码与发布记录
 
-这里只保存无凭据的源码、参考配置和证据，不是自动部署入口。
+这里只保存无凭据的源码、参考配置和证据，不是自动部署入口。当前源码位于 `/home/deploy/projects/new-api`，生产入口是仓库外的 `/srv/new-api/compose.yaml`。
 
 ## 内容
 
-- `observed-production.json`：2026-10-25 只读核对的生产产物身份。
+- `PRODUCTION-LAYOUT.md`、`layout-migration-20261025.json`：固定生产目录、当前容器和迁移结果。
+- `production_layout.py`、`relocation_canary.py`：显式分阶段迁移和短期 canary；不是自动升级器。
+- `cleanup_rebuildable_cache.py`：仅清理固定白名单中的重建缓存，默认 dry-run。
+- `observed-production.json`：2026-10-25 初次纳管时只读核对的历史产物身份。
 - `adoption-validation-20261025.json`：本次重新执行的源码核对与测试，和历史证据分开记录。
 - `docker-compose.routing.example.yml`：单个 routing 服务的参考描述；不是当前完整生产 Compose，不包含数据库/Redis/SSO 配置。
 - `history/20261018/backend/`：原 routing 发布脚本、调度器源码及隔离测试代码。
@@ -12,7 +15,7 @@
 
 `history/` 中脚本按原逻辑归档（沿用仓库 LF 换行规则），**禁止直接当作通用升级脚本重跑**：其中有当时的绝对路径、旧容器布局、固定渠道 ID 和真实管理写操作。重新运行可能覆盖路由/配置、改变渠道或 reload 入口。原发布说明是当时的记录，不是对当前系统状态的重新验收。本次没有执行这些脚本。
 
-调度器归档 `backend/scheduler/scheduler.py` 与现行 `/home/deploy/new_api_channel_scheduler/scheduler.py` 的 SHA256 相同：`2da26fd8d850080a046eefc8cb4ce4910003ca1934a28a54e7851e87ef32bc20`。它使用外部 `API_TOKEN`，不包含实际 Token；会执行渠道恢复和 OIDC 用户名协调，不要在测试中连接生产 API。
+调度器归档 `backend/scheduler/scheduler.py` 与现行 `/srv/new-api/bin/channel_scheduler.py` 的 SHA256 相同：`2da26fd8d850080a046eefc8cb4ce4910003ca1934a28a54e7851e87ef32bc20`。它使用外部 `API_TOKEN`，不包含实际 Token；会执行渠道恢复和 OIDC 用户名协调，不要在测试中连接生产 API。
 
 ## 凭据与生成物
 
@@ -34,4 +37,6 @@ go test -p 1 ./common ./model ./service ./middleware ./controller ./relay/channe
 
 前端使用 `web/bun.lock` 和 `web/package.json`，按 frontend `AGENTS.md` 执行测试、类型检查、lint 和构建。隔离集成脚本只允许专用测试数据库/应用，需要另行生成短期测试凭据；不提供生产凭据作为替代。
 
-本次重新验证：7 个 Go 包通过；dashboard 6 文件共 32 项测试、完整 typecheck 和变更的 13 文件 lint 通过。全站 lint 返回 354 个错误、76 个警告，位于既有源码中；未为纳管而修改这些生产代码。未重新构建或部署产物，也未重跑需要临时 API Token/数据库的集成场景。
+源码首次纳管检查（目录迁移前）：7 个 Go 包通过；dashboard 6 文件共 32 项测试、完整 typecheck 和变更的 13 文件 lint 通过。全站 lint 返回 354 个错误、76 个警告，位于既有源码中；未为纳管而修改这些生产代码。当时未重新构建或部署产物，也未重跑需要临时 API Token/数据库的集成场景。
+
+后续固定目录迁移：5 项离线安全检查通过；同版本候选和公网共完成 12 次 Chat/Responses SSE/function call 往返请求，短期测试 Token 已删除。数据库/Redis 未重启、没有升级或重建软件；详细范围和限制见 `PRODUCTION-LAYOUT.md` 与 `layout-migration-20261025.json`。

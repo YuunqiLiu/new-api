@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "traffic_switch_time": "22:37:02",
+  "old_master_handover_completed_time": "22:40:08",
+  "independent_source_repository": "/home/deploy/projects/new-api",
+  "git_branch": "nexevic/main",
+  "source_objects_depend_on_old_worktree": false,
+  "production_root": "/srv/new-api",
+  "production_compose": "/srv/new-api/compose.yaml",
+  "backend": {
+    "container": "new-api-production",
+    "container_id": "a4b07d757ae7cc01a06328985e77e2d174a8ede0887014ea8635b5321442ef32",
+    "image": "localhost/new-api:nexevic-routing-20261018",
+    "image_id": "sha256:cf8f9b44d8cb535e214706e39efdddc9d2c3445f7d71b9b052fd5bf59c66ad2c",
+    "binary_sha256": "4c19bced743d702b128709e9ff402632d9076e65eccb5806be1e2adccf8d6a53",
+    "http_version": "b5bedec2d-routing-20261018",
+    "listen": "127.0.0.1:3020",
+    "effective_environment_changed_keys": ["NODE_NAME"],
+    "software_rebuilt_or_upgraded": false
+  },
+  "frontend": {
+    "current": "/srv/new-api/frontend/current",
+    "release": "releases/dashboard-20261018",
+    "files_verified": 221,
+    "index_sha256": "8ed664e871ddd3d0d3243409d076192c59fce09ec044379011498a5b9e185707",
+    "content_changed": false
+  },
+  "infrastructure": {
+    "compose_project": "deploy_new_api",
+    "postgres_volume": "deploy_new_api_pg_data",
+    "network": "deploy_new_api_new-api-network",
+    "postgres_container_id_and_start_time_unchanged": true,
+    "redis_container_id_and_start_time_unchanged": true,
+    "caddy_reloaded_not_restarted": true,
+    "proxy_dns_sso_slurm_changed": false,
+    "channel_model_price_configuration_changed": false
+  },
+  "handover": {
+    "old_container": "new-api-routing",
+    "old_exit_code": 0,
+    "http_maintenance_accounting_and_batch_drain_verified": true,
+    "forced_kill_used": false,
+    "old_restart_policy": "no",
+    "new_background_tasks_started_only_after_old_exit": true,
+    "scheduler_command": "/usr/bin/python3 /srv/new-api/bin/channel_scheduler.py",
+    "scheduler_run_exit_code": 0,
+    "scheduler_timer_active": true
+  },
+  "verification": {
+    "offline_safety_tests_passed": 5,
+    "candidate_and_public_chat_responses_sse_function_roundtrip_passed": true,
+    "live_canary_model": "deepseek-v4.1-flash",
+    "live_canary_channel": 3,
+    "total_canary_generation_requests": 12,
+    "all_temporary_tokens_deleted": true,
+    "production_accounting_failure_files": 0,
+    "all_provider_models_retested": false,
+    "interactive_browser_login_performed": false
+  },
+  "backup": {
+    "private_directory": "/srv/new-api/backups/layout-20261025T142600Z",
+    "database_archive_bytes": 26373952,
+    "database_archive_readthrough_passed": true,
+    "database_restore_into_server_performed": false,
+    "old_local_git_refs_and_dirty_patches_preserved": true,
+    "private_configuration_in_git": false
+  },
+  "cleanup": {
+    "stopped_build_containers_removed": 7,
+    "unreferenced_build_cache_volumes_removed": 2,
+    "dependency_directories_removed": 3,
+    "old_install_archives_removed": 11,
+    "approximate_freed_bytes": 10294329344,
+    "system_disk_usage_percent_after": 68,
+    "production_data_or_logs_deleted": false,
+    "old_source_and_rollback_images_removed": false,
+    "old_sources_and_images_retained_for_at_least_hours": 24
+  }
+}
