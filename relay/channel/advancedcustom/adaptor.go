@@ -124,14 +124,17 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case relayconvert.ConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case relayconvert.ConverterOpenAIResponsesToOpenAIChat:
-		result, err := service.ConvertRequestByID(c, info, converter, request)
+		// Chat-only upstreams need one result per logical tool call. Retain
+		// reasoning across tool rounds and restore custom tool types on reply.
+		service.TrackResponsesCustomTools(c, &request)
+		chatRequest, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, relayconvert.ResponsesToChatOptions{
+			NormalizeToolHistory:  true,
+			PreserveToolReasoning: true,
+		})
 		if err != nil {
 			return nil, err
 		}
-		chatRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
-		if !ok {
-			return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
-		}
+		info.AppendRequestConversion(types.RelayFormatOpenAI)
 		return a.convertOpenAICompatibleRequest(c, info, chatRequest)
 	case relayconvert.ConverterOpenAIResponsesToGemini:
 		result, err := service.ConvertRequestByID(c, info, converter, request)
