@@ -1,0 +1,8 @@
+{
+  "source_commit": "33d6479e9cc0c51aa3f59bcc31ff2ef0b8d2c088",
+  "binary_hashes": {
+    "artifacts/new-api-routing": "4c19bced743d702b128709e9ff402632d9076e65eccb5806be1e2adccf8d6a53"
+  },
+  "isolated_tests": "passed",
+  "base_commit": "b5bedec2d199eee1668f5dbce02f8e1f92ebacb7"
+}

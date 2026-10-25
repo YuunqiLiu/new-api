@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-18T14:28:32.388Z",
+  "scope": "Local validation and artifact preparation only; no remote action performed by this record step.",
+  "summary": "Exact remote web baseline plus approved dashboard fixes: 32 regression cases passed; after final charts/test cleanup, all 12 affected cases passed again. Full typecheck passed. Lint and format passed on 13 files (0 errors, 0 warnings). Production build passed.",
+  "source": {
+    "baselineHead": "33d6479e9cc0c51aa3f59bcc31ff2ef0b8d2c088",
+    "finalFiles": 1090,
+    "verifiedSourceMismatches": 0,
+    "manifest": "../dashboard-local-transfer/source-final-manifest.json",
+    "manifestSha256": "151cbbf5500c504c208c08ab0f29d2cd356accd410f723b877ffd5843ae3c328",
+    "lockfileSha256": "6d2115fb1896b39af41c9f00043c11688965e0aea7a550d10c8a809d04697ff0",
+    "modifiedFileList": "../../dashboard-local-files.json"
+  },
+  "environment": {
+    "bun": "1.4.3",
+    "node": "v24.11.1",
+    "rsbuild": "2.1.6",
+    "platform": "Windows x64",
+    "dependencyInstall": "bun install --frozen-lockfile"
+  },
+  "checks": {
+    "tests": {
+      "passed": 32,
+      "total": 32,
+      "files": 6,
+      "evidence": "dashboard-local-tests-green.out"
+    },
+    "affectedTestsAfterFinalCleanup": {
+      "passed": 12,
+      "total": 12,
+      "files": 2,
+      "evidence": "dashboard-local-tests-final.out",
+      "note": "Charts and user-filter tests rerun after final equivalent lint/type cleanup. The other 20 cases passed in the earlier 32-case run and were not rerun after that cleanup; their test files were unchanged."
+    },
+    "businessErrorRedRegression": {
+      "failed": 8,
+      "passed": 2,
+      "total": 10,
+      "evidence": "dashboard-local-errors-red.out"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "evidence": "dashboard-local-typecheck-final.out"
+    },
+    "lint": {
+      "exitCode": 0,
+      "files": 13,
+      "errors": 0,
+      "warnings": 0,
+      "evidence": "dashboard-local-lint-final.out"
+    },
+    "format": {
+      "exitCode": 0,
+      "files": 13,
+      "evidence": "dashboard-local-format-final.out"
+    },
+    "productionBuild": {
+      "exitCode": 0,
+      "seconds": 7.58,
+      "evidence": "dashboard-local-build.out"
+    }
+  },
+  "artifact": {
+    "archive": "../dashboard-local-transfer/dashboard-dist-final.tar.gz",
+    "bytes": 16447509,
+    "sha256": "51a9d60b4c064f89e89c845628e4f39fb379090cfd7306ea6f8522ffc7d7556f",
+    "files": 221,
+    "uncompressedBytes": 57428031,
+    "manifest": "../dashboard-local-transfer/dist-manifest.json",
+    "manifestSha256": "5a2ac0bb41c5e999c9532ae7eb591ab0eaa2efdf4f7db1c5c6c9391e982f1e56",
+    "verifiedArtifactMismatches": 0
+  }
+}

@@ -1,0 +1,33 @@
+# Reference only. Not the complete production stack; do not run against live ports.
+# All secrets live in a separate root-only file, outside this repository.
+services:
+  new-api-routing:
+    image: ${NEXEVIC_ROUTING_IMAGE:?Set a reviewed immutable image digest}
+    container_name: new-api-routing
+    restart: always
+    stop_grace_period: 24h
+    ports:
+      - "127.0.0.1:3019:3000"
+    env_file:
+      - ${NEXEVIC_RUNTIME_ENV_FILE:?Set an external root-only environment file}
+    environment:
+      NODE_TYPE: master
+      NODE_NAME: new-api-routing-20261018
+      SKIP_DB_MIGRATION: "true"
+      BACKGROUND_TASKS_START_FILE: /handover/start
+      ACCOUNTING_FAILURE_DIR: /accounting-failures
+      CHANNEL_TEST_ENABLED: "false"
+      NEXEVIC_GLM_PEAK_CHANNEL_IDS: "6,7,14,18"
+      SHUTDOWN_TIMEOUT_SECONDS: "600"
+      TZ: Asia/Shanghai
+    volumes:
+      - ${NEXEVIC_DATA_DIR:?Set existing data directory}:/data
+      - ${NEXEVIC_ROUTING_DIR:?Set existing routing runtime directory}/logs:/app/logs
+      - ${NEXEVIC_ROUTING_DIR:?Set existing routing runtime directory}/handover:/handover
+      - ${NEXEVIC_ROUTING_DIR:?Set existing routing runtime directory}/accounting-failures:/accounting-failures
+    networks:
+      - existing-backend
+networks:
+  existing-backend:
+    external: true
+    name: ${NEXEVIC_BACKEND_NETWORK:?Set existing database and Redis network}

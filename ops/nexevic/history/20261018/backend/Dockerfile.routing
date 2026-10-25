@@ -1,0 +1,2 @@
+FROM localhost/new-api:nexevic-baidu-responses-20261014
+COPY artifacts/new-api-routing /new-api

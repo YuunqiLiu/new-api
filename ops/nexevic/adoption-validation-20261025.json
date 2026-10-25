@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-25",
+  "application_source_commit": "94600b40c",
+  "source_parity": {
+    "verified_files": 2004,
+    "frontend_override_files": 13,
+    "unexpected_mismatches": [],
+    "intentional_metadata_changes": [".gitignore", "NEXEVIC-MAINLINE.md", "ops/nexevic/"]
+  },
+  "tests": {
+    "execution_host": "NexCompute_builder isolated temporary workspace, not NexGateway",
+    "go": {
+      "toolchain": "golang:1.26.1-alpine",
+      "packages": ["./common", "./model", "./service", "./middleware", "./controller", "./relay/channel", "./relay/channel/advancedcustom"],
+      "all_passed": true,
+      "live_provider_tests_run": false
+    },
+    "frontend": {
+      "dependency_install": "bun install --frozen-lockfile",
+      "test_runtime": "Bun 1.4.0, vitest 4.1.10",
+      "test_files_passed": 6,
+      "tests_passed": 32,
+      "typecheck_passed": true,
+      "changed_file_lint": {"files": 13, "errors": 0, "warnings": 0},
+      "whole_repository_lint": {"passed": false, "errors": 354, "warnings": 76, "note": "Existing unchanged source outside the 13 dashboard files; preserved, not repaired in this adoption."}
+    },
+    "archived_python_syntax": {"files": 18, "passed": true},
+    "archived_json_parse_passed": true,
+    "reference_compose_parse_passed": true,
+    "reference_compose_validation_used_no_production_environment": true
+  },
+  "security": {
+    "imported_file_scan": "No exact known runtime/test secrets or common provider key/private key/JWT patterns found",
+    "known_secret_values_compared_in_memory": 14,
+    "private_generated_files_excluded": true,
+    "production_database_or_user_data_exported": false
+  },
+  "production": {
+    "container_identity_and_start_time_unchanged": true,
+    "binary_and_frontend_index_hashes_verified": true,
+    "container_healthy": true,
+    "public_status_success": true,
+    "public_version": "b5bedec2d-routing-20261018",
+    "rebuild_redeploy_or_restart_performed": false
+  },
+  "remote": {
+    "push_dry_run_passed": false,
+    "reason": "No GitHub HTTPS credential or SSH agent available on this host",
+    "remote_default_branch_changed": false,
+    "release_tag_pushed": false,
+    "tag_push_requires_workflow_review": true
+  }
+}

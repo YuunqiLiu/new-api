@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "proxy": "http://127.0.0.1:19180",
+  "admin": "127.0.0.1:19181",
+  "http_status": 200,
+  "sse_done": true,
+  "upstream_calls": 1,
+  "new_configuration_seen": true,
+  "request_held_across_reload": true,
+  "isolated_app_stopped_cleanly": true,
+  "test_caddy_stopped": true
+}

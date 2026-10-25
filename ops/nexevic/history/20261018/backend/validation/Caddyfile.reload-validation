@@ -1,0 +1,9 @@
+{
+    admin 127.0.0.1:19181
+    auto_https off
+    persist_config off
+}
+http://127.0.0.1:19180 {
+    header X-Isolated-Reload v2
+    reverse_proxy 127.0.0.1:3018
+}

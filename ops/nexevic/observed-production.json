@@ -1,0 +1,31 @@
+{
+  "record_type": "read_only_adoption_not_deployment",
+  "observed_date": "2026-10-25",
+  "production_deployment_date": "2026-10-18",
+  "branch": "nexevic/main",
+  "source_baseline": "b5bedec2d199eee1668f5dbce02f8e1f92ebacb7",
+  "original_routing_snapshot": "33d6479e9cc0c51aa3f59bcc31ff2ef0b8d2c088",
+  "consolidated_backend_commit": "b993dd4ab",
+  "consolidated_frontend_commit": "94600b40c",
+  "backend": {
+    "container": "new-api-routing",
+    "container_id": "8a52b93ddaf2f0e8bf62e5abbe37b759bcd5bb18877c06ebf0e912b6986e750f",
+    "started_at_utc": "2026-10-24T11:30:58.652852512Z",
+    "image_tag": "localhost/new-api:nexevic-routing-20261018",
+    "local_image_id": "sha256:cf8f9b44d8cb535e214706e39efdddc9d2c3445f7d71b9b052fd5bf59c66ad2c",
+    "binary_sha256": "4c19bced743d702b128709e9ff402632d9076e65eccb5806be1e2adccf8d6a53",
+    "http_version": "b5bedec2d-routing-20261018",
+    "listen": "127.0.0.1:3019",
+    "health": "healthy"
+  },
+  "frontend": {
+    "release_directory": "/srv/new-api-frontend/releases/dashboard-20261018",
+    "index_sha256": "8ed664e871ddd3d0d3243409d076192c59fce09ec044379011498a5b9e185707",
+    "asset_count": 221,
+    "original_archive_sha256": "51a9d60b4c064f89e89c845628e4f39fb379090cfd7306ea6f8522ffc7d7556f",
+    "served_by": "existing Caddy static overlay; backend embedded frontend remains fallback"
+  },
+  "scheduler_sha256": "2da26fd8d850080a046eefc8cb4ce4910003ca1934a28a54e7851e87ef32bc20",
+  "secrets_and_runtime_data_included": false,
+  "production_restarted_or_redeployed": false
+}

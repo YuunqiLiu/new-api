@@ -1,0 +1,43 @@
+{
+  "recorded_at": "2026-10-18T22:46:44.9841509+08:00",
+  "applied": true,
+  "remote_state": "/home/deploy/worktrees/new-api-dashboard-20261018/deployment/frontend-prepared-a94126025086/state.json",
+  "release": "/srv/new-api-frontend/releases/dashboard-20261018",
+  "html_sha256": "8ed664e871ddd3d0d3243409d076192c59fce09ec044379011498a5b9e185707",
+  "backend_version": "b5bedec2d-routing-20261018",
+  "backend_identity_unchanged": true,
+  "browser_validation": {
+    "users": {
+      "days": 29,
+      "end": "2026-10-18 22:43:12",
+      "start": "2026-09-19 22:43:12",
+      "displayed_quota_cny": "44696.83",
+      "day_to_week_range_unchanged": true
+    },
+    "models": {
+      "days": 29,
+      "grain": "day",
+      "history_visible_from": "2026-09-19",
+      "displayed_quota_cny": "44696.83",
+      "requests": 285496
+    }
+  },
+  "tests": {
+    "format": "passed",
+    "affected_retest_passed": 12,
+    "regressions_passed": 32,
+    "typecheck": "passed",
+    "lint": "0 errors 0 warnings",
+    "build": "passed locally"
+  },
+  "incident": {
+    "resolution": "Local build, verified delta transfer, server and browser health confirmed",
+    "api_container_restarted": false,
+    "host_pressure_confirmed": true,
+    "container": "new-api-dashboard-build-20261018",
+    "request_impact": "Not established; no assumption of zero impact",
+    "remote_build_exited": true,
+    "caddy_service_restarted": false,
+    "remote_build_oom": true
+  }
+}
