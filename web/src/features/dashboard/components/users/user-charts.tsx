@@ -27,15 +27,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
+import { QueryRange } from '@/features/dashboard/components/ui/query-range'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
 } from '@/features/dashboard/constants'
-import {
-  getDefaultDays,
-  saveGranularity,
-  processUserChartData,
-} from '@/features/dashboard/lib'
+import { processUserChartData } from '@/features/dashboard/lib'
 import type {
   ProcessedUserChartData,
   UserChartsFilters,
@@ -103,11 +100,9 @@ export function UserCharts(props: UserChartsProps) {
 
   const handleGranularityChange = useCallback(
     (g: TimeGranularity) => {
-      saveGranularity(g)
       onFiltersChange({
         ...props.filters,
         timeGranularity: g,
-        selectedRange: getDefaultDays(g),
       })
     },
     [onFiltersChange, props.filters]
@@ -136,10 +131,22 @@ export function UserCharts(props: UserChartsProps) {
     updateTheme()
   }, [resolvedTheme])
 
-  const { data: userData, isLoading } = useQuery({
+  const {
+    data: userData,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['dashboard', 'user-quota', timeRange],
-    queryFn: () => getUserQuotaDataByUsers(timeRange),
-    select: (res) => (res.success ? res.data : []),
+    queryFn: async () => {
+      const res = await getUserQuotaDataByUsers(timeRange)
+      if (
+        res?.success !== true ||
+        (res.data !== null && !Array.isArray(res.data))
+      ) {
+        throw new Error('Invalid usage data response')
+      }
+      return res.data ?? []
+    },
     staleTime: 60_000,
   })
 
@@ -221,44 +228,60 @@ export function UserCharts(props: UserChartsProps) {
         )}
       </div>
 
-      <div className='grid gap-3'>
-        {USER_CHARTS.map((chart) => {
-          const spec = chartData[chart.specKey]
+      <QueryRange
+        start={timeRange.start_timestamp}
+        end={timeRange.end_timestamp}
+      />
 
-          return (
-            <div
-              key={chart.value}
-              className='overflow-hidden rounded-lg border'
-            >
-              <div className='flex w-full items-center gap-2 border-b px-3 py-2 sm:px-5 sm:py-3'>
-                <IconBadge tone='info' size='sm'>
-                  <Users />
-                </IconBadge>
-                <div className='text-sm font-semibold'>{t(chart.labelKey)}</div>
-              </div>
+      {isError ? (
+        <div
+          role='alert'
+          className='text-destructive rounded-lg border p-4 text-sm'
+        >
+          {t('Request failed')}
+        </div>
+      ) : (
+        <div className='grid gap-3'>
+          {USER_CHARTS.map((chart) => {
+            const spec = chartData[chart.specKey]
 
-              <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
-                {isLoading ? (
-                  <Skeleton className='h-full w-full' />
-                ) : (
-                  themeReady &&
-                  spec && (
-                    <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${resolvedTheme}`}
-                      spec={{
-                        ...spec,
-                        theme: resolvedTheme === 'dark' ? 'dark' : 'light',
-                        background: 'transparent',
-                      }}
-                      option={VCHART_OPTION}
-                    />
-                  )
-                )}
+            return (
+              <div
+                key={chart.value}
+                className='overflow-hidden rounded-lg border'
+              >
+                <div className='flex w-full items-center gap-2 border-b px-3 py-2 sm:px-5 sm:py-3'>
+                  <IconBadge tone='info' size='sm'>
+                    <Users />
+                  </IconBadge>
+                  <div className='text-sm font-semibold'>
+                    {t(chart.labelKey)}
+                  </div>
+                </div>
+
+                <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
+                  {isLoading ? (
+                    <Skeleton className='h-full w-full' />
+                  ) : (
+                    themeReady &&
+                    spec && (
+                      <VChart
+                        key={`user-${chart.value}-${topUserLimit}-${resolvedTheme}`}
+                        spec={{
+                          ...spec,
+                          theme: resolvedTheme === 'dark' ? 'dark' : 'light',
+                          background: 'transparent',
+                        }}
+                        option={VCHART_OPTION}
+                      />
+                    )
+                  )}
+                </div>
               </div>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

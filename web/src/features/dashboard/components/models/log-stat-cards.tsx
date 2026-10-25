@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getUserQuotaDates } from '@/features/dashboard/api'
+import { QueryRange } from '@/features/dashboard/components/ui/query-range'
 import { useModelStatCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import {
   buildQueryParams,
@@ -40,7 +41,11 @@ import { useAuthStore } from '@/stores/auth-store'
 
 interface LogStatCardsProps {
   filters?: DashboardFilters
-  onDataUpdate?: (data: QuotaDataItem[], loading: boolean) => void
+  onDataUpdate?: (
+    data: QuotaDataItem[],
+    loading: boolean,
+    failed?: boolean
+  ) => void
 }
 
 const MAX_INLINE_STAT_CHARS = 9
@@ -59,7 +64,7 @@ function formatStatNumber(value: number, locale: Intl.LocalesArgument) {
 }
 
 export function LogStatCards(props: LogStatCardsProps) {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const statCardsConfig = useModelStatCardsConfig()
   const user = useAuthStore((state) => state.auth.user)
   const isAdmin = !!(user?.role && user.role >= 10)
@@ -72,6 +77,9 @@ export function LogStatCards(props: LogStatCardsProps) {
   const [error, setError] = useState(false)
 
   const [timeRangeMinutes, setTimeRangeMinutes] = useState(0)
+  const [queryRange, setQueryRange] = useState<ReturnType<
+    typeof computeTimeRange
+  > | null>(null)
 
   const { filters, onDataUpdate } = props
 
@@ -81,7 +89,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     setLoading(true)
 
     setError(false)
-    onDataUpdate?.([], true)
+    onDataUpdate?.([], true, false)
 
     const timeRange = computeTimeRange(
       getDefaultDays(filters?.time_granularity),
@@ -89,20 +97,27 @@ export function LogStatCards(props: LogStatCardsProps) {
       filters?.end_timestamp
     )
     const timeDiff = (timeRange.end_timestamp - timeRange.start_timestamp) / 60
+    setQueryRange(timeRange)
     setTimeRangeMinutes(timeDiff)
 
     void getUserQuotaDates(buildQueryParams(timeRange, filters), isAdmin)
       .then((res) => {
         if (abortController.signal.aborted) return
-        const data = res?.data || []
+        if (
+          res?.success !== true ||
+          (res.data !== null && !Array.isArray(res.data))
+        ) {
+          throw new Error('Invalid usage data response')
+        }
+        const data = res.data ?? []
         setStats(calculateDashboardStats(data))
-        onDataUpdate?.(data, false)
+        onDataUpdate?.(data, false, false)
       })
       .catch(() => {
         if (abortController.signal.aborted) return
         setStats(null)
         setError(true)
-        onDataUpdate?.([], false)
+        onDataUpdate?.([], false, true)
       })
       .finally(() => {
         if (!abortController.signal.aborted) {
@@ -144,6 +159,19 @@ export function LogStatCards(props: LogStatCardsProps) {
 
   return (
     <div className='overflow-hidden rounded-lg border'>
+      {queryRange && (
+        <div className='border-b px-3 py-2 sm:px-5'>
+          <QueryRange
+            start={queryRange.start_timestamp}
+            end={queryRange.end_timestamp}
+          />
+        </div>
+      )}
+      {error && (
+        <p role='alert' className='text-destructive px-3 py-2 text-sm sm:px-5'>
+          {t('Request failed')}
+        </p>
+      )}
       <div className='divide-border/60 grid min-w-0 grid-cols-2 divide-x sm:grid-cols-3 lg:grid-cols-5'>
         {items.map((it, idx) => {
           const Icon = it.icon

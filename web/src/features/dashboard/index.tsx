@@ -42,11 +42,13 @@ import { PromptCacheMonitoring } from './components/prompt-cache-monitoring'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
   buildDefaultDashboardFilters,
-  getDefaultDays,
   getSavedChartPreferences,
-  getSavedGranularity,
   saveChartPreferences,
 } from './lib'
+import {
+  getSavedUserChartsFilters,
+  saveUserChartsFilters,
+} from './lib/user-chart-filters'
 import {
   type DashboardSectionId,
   DASHBOARD_DEFAULT_SECTION,
@@ -202,21 +204,22 @@ export function Dashboard() {
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
 
   const [modelData, setModelData] = useState<QuotaDataItem[]>([])
-  const [dataLoading, setDataLoading] = useState(false)
+  const [dataLoading, setDataLoading] = useState(true)
+  const [dataFailed, setDataFailed] = useState(false)
   const [chartPreferences, setChartPreferences] =
     useState<DashboardChartPreferences>(() => getSavedChartPreferences())
   const [modelFilters, setModelFilters] = useState<DashboardFilters>(() =>
     buildDefaultDashboardFilters(getSavedChartPreferences())
   )
   const [userChartsFilters, setUserChartsFilters] = useState<UserChartsFilters>(
-    () => {
-      const granularity = getSavedGranularity()
-      return {
-        timeGranularity: granularity,
-        selectedRange: getDefaultDays(granularity),
-        topUserLimit: 10,
-      }
-    }
+    getSavedUserChartsFilters
+  )
+  const handleUserChartsFiltersChange = useCallback(
+    (filters: UserChartsFilters) => {
+      setUserChartsFilters(filters)
+      saveUserChartsFilters(filters)
+    },
+    []
   )
   const [flowSensitiveVisible, setFlowSensitiveVisible] = useState(true)
 
@@ -229,9 +232,10 @@ export function Dashboard() {
   }, [chartPreferences])
 
   const handleDataUpdate = useCallback(
-    (data: QuotaDataItem[], loading: boolean) => {
+    (data: QuotaDataItem[], loading: boolean, failed = false) => {
       setModelData(data)
       setDataLoading(loading)
+      setDataFailed(failed)
     },
     []
   )
@@ -250,7 +254,10 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin) && (section !== 'prompt-cache' || isAdmin)
+        (section) =>
+          section !== 'overview' &&
+          (section !== 'users' || isAdmin) &&
+          (section !== 'prompt-cache' || isAdmin)
       ),
     [isAdmin]
   )
@@ -364,32 +371,45 @@ export function Dashboard() {
                   </Suspense>
                 </FadeIn>
               )}
-              <FadeIn delay={0.1}>
-                <Suspense fallback={<ModelChartsFallback />}>
-                  <LazyConsumptionDistributionChart
-                    data={modelData}
-                    loading={dataLoading}
-                    defaultChartType={
-                      chartPreferences.consumptionDistributionChart
-                    }
-                    timeGranularity={
-                      modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
-                    }
-                  />
-                </Suspense>
-              </FadeIn>
-              <FadeIn delay={0.15}>
-                <Suspense fallback={<ModelChartsFallback />}>
-                  <LazyModelCharts
-                    data={modelData}
-                    loading={dataLoading}
-                    defaultChartTab={chartPreferences.modelAnalyticsChart}
-                    timeGranularity={
-                      modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
-                    }
-                  />
-                </Suspense>
-              </FadeIn>
+              {dataFailed ? (
+                <div
+                  role='alert'
+                  className='text-destructive rounded-lg border p-4 text-sm'
+                >
+                  {t('Request failed')}
+                </div>
+              ) : (
+                <>
+                  <FadeIn delay={0.1}>
+                    <Suspense fallback={<ModelChartsFallback />}>
+                      <LazyConsumptionDistributionChart
+                        data={modelData}
+                        loading={dataLoading}
+                        defaultChartType={
+                          chartPreferences.consumptionDistributionChart
+                        }
+                        timeGranularity={
+                          modelFilters.time_granularity ||
+                          DEFAULT_TIME_GRANULARITY
+                        }
+                      />
+                    </Suspense>
+                  </FadeIn>
+                  <FadeIn delay={0.15}>
+                    <Suspense fallback={<ModelChartsFallback />}>
+                      <LazyModelCharts
+                        data={modelData}
+                        loading={dataLoading}
+                        defaultChartTab={chartPreferences.modelAnalyticsChart}
+                        timeGranularity={
+                          modelFilters.time_granularity ||
+                          DEFAULT_TIME_GRANULARITY
+                        }
+                      />
+                    </Suspense>
+                  </FadeIn>
+                </>
+              )}
             </>
           )}
           {activeSection === 'users' && (
@@ -397,7 +417,7 @@ export function Dashboard() {
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyUserCharts
                   filters={userChartsFilters}
-                  onFiltersChange={setUserChartsFilters}
+                  onFiltersChange={handleUserChartsFiltersChange}
                 />
               </Suspense>
             </FadeIn>
@@ -412,7 +432,11 @@ export function Dashboard() {
               </Suspense>
             </FadeIn>
           )}
-          {activeSection === 'prompt-cache' && isAdmin && <FadeIn><PromptCacheMonitoring /></FadeIn>}
+          {activeSection === 'prompt-cache' && isAdmin && (
+            <FadeIn>
+              <PromptCacheMonitoring />
+            </FadeIn>
+          )}
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
