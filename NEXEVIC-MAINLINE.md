@@ -12,7 +12,7 @@
 
 保留完整上游和原定制历史；没有覆盖 `main`、`feat/channel-plan-quota` 或旧 worktree，也没有删除旧容器/镜像。今后的功能和修复应从 `nexevic/main` 建分支，不再把独立 snapshot 仓库或部署目录当作源码主线。
 
-**远程状态：本机暂缺 GitHub 写入凭据，推送 dry-run 报 `could not read Username`。当前提交和标签仅保存在本机，不代表已有异机备份。** 配置经授权的仓库写入凭据后，可执行 `git push -u origin nexevic/main`；不要强推或覆盖远程 `main`。本次未更改 GitHub 默认分支。
+**远程同步目标：`origin/nexevic/main`。** 首次纳管时没有可用推送凭据；后续同步使用当前会话注入的 GitHub 仓库授权，不把凭据写入源码或磁盘。推送后应核对远端分支 SHA 与本地 `HEAD` 一致；不要强推或覆盖远程 `main`。本次未更改 GitHub 默认分支。`ops/nexevic/adoption-validation-20261025.json` 中的远程失败记录保留为首次纳管时的历史证据，不代表之后的同步状态。
 
 另在 `/home/deploy/backups/new-api-mainline-20261025/source.bundle` 保存独立 Git bundle，可用于恢复完整主线历史和本地基线标签；它仍是本机副本，不能代替异机备份。
 
