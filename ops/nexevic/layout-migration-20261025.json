@@ -56,7 +56,10 @@
     "all_temporary_tokens_deleted": true,
     "production_accounting_failure_files": 0,
     "all_provider_models_retested": false,
-    "interactive_browser_login_performed": false
+    "interactive_browser_login_performed": false,
+    "isolated_chrome_admin_pat_read_requests_passed": true,
+    "browser_login_page_and_sso_validation_complete": false,
+    "today_statistics_requests_asof_2304_cst": 337
   },
   "backup": {
     "private_directory": "/srv/new-api/backups/layout-20261025T142600Z",
