@@ -103,35 +103,15 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					affinityUsable := false
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
-						if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetRequestAutoGroups(c, userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
-								}
-							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
-						}
-					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+					preferred, affinityGroup, affinityErr := service.GetUsableAffinityChannel(c, modelRequest.Model, usingGroup, c.Request.URL.Path, preferredChannelID)
+					if affinityErr == nil && preferred != nil {
+						channel = preferred
+						selectGroup = affinityGroup
+						service.MarkChannelAffinityUsed(c, affinityGroup, preferred.Id)
+					} else if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 						service.ClearCurrentChannelAffinityCache(c)
 					}
 				}
-
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 						Ctx:         c,
@@ -164,11 +144,18 @@ func Distribute() func(c *gin.Context) {
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		// Record the routing outcome for both affinity hits and cold starts. This
 		// is admin-only consume-log metadata and contains only the key fingerprint.
-		service.MarkChannelAffinityUsed(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), channel.Id)
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if channel != nil {
+			if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, setupErr.Error(), types.ErrorCodeGetChannelFailed)
+				return
+			}
+			service.MarkChannelAffinityUsed(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), channel.Id)
+		}
 		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && !c.GetBool("channel_relay_failed") {
+			// A successful retry may have switched channels. Do not overwrite its
+			// affinity with the middleware's original (failed) selection.
+			service.RecordChannelAffinity(c, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 		}
 	}
 }
@@ -442,9 +429,16 @@ func getTaskOriginModelName(c *gin.Context) string {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return setupContextForSelectedChannelAt(c, channel, modelName, time.Now())
+}
+
+func setupContextForSelectedChannelAt(c *gin.Context, channel *model.Channel, modelName string, now time.Time) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if common.IsChannelTimeBlockedAt(channel.Id, now) {
+		return types.NewErrorWithStatusCode(errors.New("channel is unavailable during its scheduled exclusion window"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)

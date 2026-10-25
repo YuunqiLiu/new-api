@@ -27,6 +27,12 @@ func StartAuthArtifactCleanup() {
 }
 
 func cleanupAuthArtifacts() {
+	done, accepted := common.BeginMaintenanceTask()
+	if !accepted {
+		return
+	}
+	defer done()
+
 	now := time.Now()
 	count, err := model.CountUserSessionsCreatedSince(0, now.Add(-time.Hour).Unix())
 	if err != nil {

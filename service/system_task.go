@@ -136,6 +136,11 @@ func StartSystemTaskRunner() {
 			var lastScheduler time.Time
 			var lastStaleLockCleanup time.Time
 			runPass := func() {
+				done, accepted := common.BeginMaintenanceTask()
+				if !accepted {
+					return
+				}
+				defer done()
 				// The scheduler/stale-lock pass is throttled independently of the
 				// claim pass: wakeups (e.g. a manual log cleanup) should claim
 				// immediately without re-running the scheduler every time.
@@ -248,10 +253,11 @@ func runSystemTaskClaimPass(runnerID string) {
 		}
 		dispatchHandler := handler
 		dispatchTask := claimedTask
-		gopool.Go(func() {
+		common.GoAccountingTask(func() error {
 			runWithLeaseHeartbeat(dispatchTask, runnerID, func(ctx context.Context) {
 				dispatchHandler.Run(ctx, dispatchTask, runnerID)
 			})
+			return nil
 		})
 	}
 }

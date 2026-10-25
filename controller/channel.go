@@ -963,6 +963,7 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
+	channel.StatusVersion = 0 // recovery versions are server-owned
 
 	// 使用统一的校验函数
 	if err := validateChannel(&channel.Channel, false); err != nil {
@@ -1534,6 +1535,17 @@ func ManageMultiKeys(c *gin.Context) {
 	lock := model.GetChannelPollingLock(channel.Id)
 	lock.Lock()
 	defer lock.Unlock()
+	// A status/key operation may have finished while this request waited for
+	// the lock. Only edit the snapshot read after acquiring it.
+	channel, err = model.GetChannelById(request.ChannelId, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !channel.ChannelInfo.IsMultiKey {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 
 	switch request.Action {
 	case "get_key_status":

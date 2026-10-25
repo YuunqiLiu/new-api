@@ -49,6 +49,19 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
+	if err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota || err.GetErrorCode() == types.ErrorCodePreConsumeTokenQuotaFailed {
+		return false
+	}
+	if types.IsSkipRetryError(err) && !types.IsChannelError(err) {
+		return false
+	}
+	classification := ClassifyChannelFailure(err)
+	if classification == ChannelFailureRateLimit || classification == ChannelFailureModel {
+		return false
+	}
+	if classification == ChannelFailureAccountQuota || classification == ChannelFailureAuth {
+		return true
+	}
 	if types.IsChannelError(err) {
 		return true
 	}

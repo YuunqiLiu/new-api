@@ -392,6 +392,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	if info.ChannelMeta != nil && common2.IsChannelTimeBlocked(info.ChannelId) {
+		return nil, common2.ErrChannelTimeBlocked
+	}
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
@@ -498,6 +501,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	// transparent stream retries.
 	relayClient := *client
 	relayClient.CheckRedirect = keepUpstreamRedirectResponse
+	if info.ChannelMeta != nil {
+		transport := relayClient.Transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		relayClient.Transport = &channelTimeGatedTransport{base: transport, channelID: info.ChannelId, now: time.Now}
+	}
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
 		logger.LogDebug(c, fmt.Sprintf(
@@ -529,6 +539,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	// Check after request conversion, proxy setup and any preflight work, at
+	// the final shared boundary before starting an upstream HTTP request.
+	if info.ChannelMeta != nil && common2.IsChannelTimeBlocked(info.ChannelId) {
+		return nil, common2.ErrChannelTimeBlocked
+	}
 	resp, err := relayClient.Do(req)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())

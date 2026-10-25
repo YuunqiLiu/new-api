@@ -91,8 +91,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			c.Set("channel_relay_failed", true)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() {
+				return // Do not append a JSON error to an already started response.
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -195,12 +199,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	var forcedChannelId int
 	for attempt := 0; ; attempt++ {
+		if attempt > 0 && (!canReplayRelayRequest(c) || !retryPolicy.withinTimeBudget()) {
+			break
+		}
 		retryParam.SetRetry(0)
 		relayInfo.RetryIndex = attempt
 		var channel *model.Channel
 		var channelErr *types.NewAPIError
 		if forcedChannelId != 0 {
 			channel, channelErr = getSpecificRetryChannel(c, relayInfo, forcedChannelId)
+			if channelErr != nil && retryPolicy.canSwitchChannel() {
+				retryPolicy.switchChannel(forcedChannelId)
+				service.ClearCurrentChannelAffinityCache(c)
+				forcedChannelId = 0
+				channel, channelErr = getChannel(c, relayInfo, retryParam)
+			}
 		} else {
 			channel, channelErr = getChannel(c, relayInfo, retryParam)
 		}
@@ -226,6 +239,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		// Recheck immediately before dispatch: selection and retry backoff may
+		// have crossed the beginning of the exclusion window.
+		if common.IsChannelTimeBlocked(channel.Id) {
+			newAPIError = types.NewErrorWithStatusCode(errors.New("channel is unavailable during its scheduled exclusion window"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			if _, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); pinned || !retryPolicy.canSwitchChannel() {
+				break
+			}
+			retryPolicy.switchChannel(channel.Id)
+			service.ClearCurrentChannelAffinityCache(c)
+			forcedChannelId = 0
+			continue
+		}
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -248,6 +273,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		if errors.Is(newAPIError.Err, common.ErrChannelTimeBlocked) {
+			// This is a local scheduling decision, not an upstream health failure.
+			newAPIError = types.NewErrorWithStatusCode(common.ErrChannelTimeBlocked, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			if _, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); pinned || !canReplayRelayRequest(c) || !retryPolicy.canSwitchChannel() {
+				break
+			}
+			retryPolicy.switchChannel(channel.Id)
+			service.ClearCurrentChannelAffinityCache(c)
+			forcedChannelId = 0
+			continue
+		}
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
@@ -256,7 +292,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if retryPolicy.retrySameChannel(newAPIError) {
 			forcedChannelId = channel.Id
-			time.Sleep(retryPolicy.markSameChannelRetry())
+			timer := time.NewTimer(retryPolicy.markSameChannelRetry())
+			select {
+			case <-timer.C:
+			case <-c.Request.Context().Done():
+				timer.Stop()
+			}
 			continue
 		}
 		if !retryPolicy.canSwitchChannel() {
@@ -283,6 +324,9 @@ func getSpecificRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, channe
 	channel, err := model.CacheGetChannel(channelId)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeGetChannelFailed)
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		return nil, types.NewError(errors.New("retry channel is disabled"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName); newAPIError != nil {
 		return nil, newAPIError
@@ -334,17 +378,13 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if info.ChannelMeta == nil {
-		autoBan := c.GetBool("auto_ban")
-		autoBanInt := 1
-		if !autoBan {
-			autoBanInt = 0
+		channel, err := model.CacheGetChannel(common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		if err == nil && channel.Status == common.ChannelStatusEnabled && !retryParam.ExcludedChannelIds[channel.Id] && !common.IsChannelTimeBlocked(channel.Id) {
+			return channel, nil // Keep the initial selection, including affinity.
 		}
-		return &model.Channel{
-			Id:      c.GetInt("channel_id"),
-			Type:    c.GetInt("channel_type"),
-			Name:    c.GetString("channel_name"),
-			AutoBan: &autoBanInt,
-		}, nil
+		if _, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); pinned {
+			return nil, types.NewError(errors.New("specified channel is unavailable"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {
@@ -364,7 +404,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
-	if openaiErr == nil {
+	if openaiErr == nil || !canReplayRelayRequest(c) {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
@@ -401,7 +441,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	if service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
-			service.DisableChannel(channelError, err.ErrorWithStatusCode())
+			service.DisableChannelForError(channelError, err)
 		})
 	}
 
@@ -578,6 +618,10 @@ func RelayTask(c *gin.Context) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		if common.IsChannelTimeBlocked(channel.Id) {
+			taskErr = service.TaskErrorWrapperLocal(errors.New("channel is unavailable during its scheduled exclusion window"), "channel_time_blocked", http.StatusServiceUnavailable)
+			break
+		}
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
@@ -655,7 +699,7 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskError, retryTimes int) bool {
-	if taskErr == nil {
+	if taskErr == nil || !canReplayRelayRequest(c) {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {

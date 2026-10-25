@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/gin-gonic/gin"
 )
 
 type relayRetryPolicy struct {
@@ -12,12 +13,14 @@ type relayRetryPolicy struct {
 	sameChannelRetries int
 	channelSwitches    int
 	excludedChannels   map[int]bool
+	now                func() time.Time
 }
 
 func newRelayRetryPolicy() *relayRetryPolicy {
 	return &relayRetryPolicy{
 		startedAt:        time.Now(),
 		excludedChannels: make(map[int]bool),
+		now:              time.Now,
 	}
 }
 
@@ -25,7 +28,16 @@ func (p *relayRetryPolicy) withinTimeBudget() bool {
 	if common.RetryTimeBudgetSeconds <= 0 {
 		return true
 	}
-	return time.Since(p.startedAt) < time.Duration(common.RetryTimeBudgetSeconds)*time.Second
+	return p.now().Sub(p.startedAt) < time.Duration(common.RetryTimeBudgetSeconds)*time.Second
+}
+
+// Once headers or a body have reached the client, replaying the request can
+// duplicate output and work. This includes a partially emitted SSE response.
+func canReplayRelayRequest(c *gin.Context) bool {
+	if c == nil || (c.Writer != nil && c.Writer.Written()) {
+		return false
+	}
+	return c.Request == nil || c.Request.Context().Err() == nil
 }
 
 func (p *relayRetryPolicy) retrySameChannel(err *types.NewAPIError) bool {

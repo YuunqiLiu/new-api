@@ -114,20 +114,6 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
-	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
-		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
-		if err != nil {
-			common.FatalLog("failed to parse CHANNEL_UPDATE_FREQUENCY: " + err.Error())
-		}
-		go controller.AutomaticallyUpdateChannels(frequency)
-	}
-
-	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
-	service.StartCodexCredentialAutoRefreshTask()
-
-	// Subscription quota reset task (daily/weekly/monthly/custom)
-	service.StartSubscriptionQuotaResetTask()
-
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()
@@ -149,7 +135,9 @@ func main() {
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
 	controller.RegisterScheduledSystemTasks()
-	service.StartSystemTaskRunner()
+	backgroundCtx, cancelBackgroundStartup := context.WithCancel(context.Background())
+	defer cancelBackgroundStartup()
+	go startBackgroundTasksAfterHandover(backgroundCtx)
 
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
@@ -223,19 +211,77 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+	cancelBackgroundStartup()
+	common.StopMaintenanceTaskAdmission()
 
-	// SSE streams may run for minutes; give them time to finish before forced exit
+	// This is a warning interval, not permission to lose an in-flight stream or
+	// pending accounting. The deployment must not impose a Docker SIGKILL deadline.
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
-	}
+	waitForDrain("HTTP requests", shutdownTimeout, srv.Shutdown)
+	waitForDrain("maintenance tasks", shutdownTimeout, common.WaitForMaintenanceTasks)
+	waitForDrain("accounting tasks", shutdownTimeout, common.WaitForAccountingTasks)
+	waitForDrain("batch accounting", shutdownTimeout, model.FlushBatchUpdates)
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
 	}
 	common.SysLog("server exited")
+}
+
+// A new process starts in its final master role, but waits until the old master
+// has stopped before claiming maintenance responsibilities. Cache sync, local
+// accounting and instance reporting run independently of this marker.
+func startBackgroundTasksAfterHandover(ctx context.Context) {
+	marker := os.Getenv("BACKGROUND_TASKS_START_FILE")
+	if marker != "" {
+		common.SysLog("background tasks waiting for deployment handover marker")
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			info, err := os.Stat(marker)
+			if err == nil && info.Mode().IsRegular() {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	service.StartCodexCredentialAutoRefreshTask()
+	service.StartSubscriptionQuotaResetTask()
+	service.StartAuthArtifactCleanup()
+	service.StartSystemTaskRunner()
+	if raw := os.Getenv("CHANNEL_UPDATE_FREQUENCY"); raw != "" {
+		frequency, err := strconv.Atoi(raw)
+		if err != nil || frequency <= 0 {
+			common.SysError("CHANNEL_UPDATE_FREQUENCY must be a positive number of minutes; automatic balance updates not started")
+			return
+		}
+		go controller.AutomaticallyUpdateChannels(frequency)
+	}
+	common.SysLog("background task handover completed")
+}
+
+func waitForDrain(stage string, timeout time.Duration, wait func(context.Context) error) {
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		err := wait(ctx)
+		cancel()
+		if err == nil {
+			common.SysLog(stage + " drained")
+			return
+		}
+		common.SysError(fmt.Sprintf("shutdown paused at %s: %v; process remains alive, do not force-stop", stage, err))
+		time.Sleep(30 * time.Second)
+	}
 }
 
 func InjectUmamiAnalytics() {
@@ -317,7 +363,7 @@ func InitResources() error {
 	model.CheckSetup()
 
 	// Initialize options, should after model.InitDB()
-	if common.IsMasterNode {
+	if common.IsMasterNode && os.Getenv("SKIP_DB_MIGRATION") != "true" {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError("failed to migrate retired frontend options: " + err.Error())
 		}
@@ -361,8 +407,6 @@ func InitResources() error {
 		common.SysError("failed to load custom OAuth providers: " + err.Error())
 		// Don't return error, custom OAuth is not critical
 	}
-
-	service.StartAuthArtifactCleanup()
 
 	return nil
 }

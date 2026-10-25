@@ -53,6 +53,12 @@ func StartCodexCredentialAutoRefreshTask() {
 }
 
 func runCodexCredentialAutoRefreshOnce() {
+	done, accepted := common.BeginMaintenanceTask()
+	if !accepted {
+		return
+	}
+	defer done()
+
 	if !codexCredentialRefreshRunning.CompareAndSwap(false, true) {
 		return
 	}

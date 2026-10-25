@@ -45,6 +45,12 @@ func StartSubscriptionQuotaResetTask() {
 }
 
 func runSubscriptionQuotaResetOnce() {
+	done, accepted := common.BeginMaintenanceTask()
+	if !accepted {
+		return
+	}
+	defer done()
+
 	if !subscriptionResetRunning.CompareAndSwap(false, true) {
 		return
 	}

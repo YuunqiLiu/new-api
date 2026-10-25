@@ -2,6 +2,7 @@ package authz
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -31,7 +32,7 @@ m = r.sub == p.sub && r.obj == p.obj && r.act == p.act && p.eft == "allow"
 `
 
 func Init(db *gorm.DB) error {
-	if common.IsMasterNode {
+	if common.IsMasterNode && os.Getenv("SKIP_DB_MIGRATION") != "true" {
 		if err := seedBuiltInRoles(db); err != nil {
 			return err
 		}
@@ -54,7 +55,7 @@ func Init(db *gorm.DB) error {
 	enforcer = e
 	enforcerMu.Unlock()
 
-	if !common.IsMasterNode {
+	if !common.IsMasterNode || os.Getenv("SKIP_DB_MIGRATION") == "true" {
 		return nil
 	}
 	return seedDefaultPolicies()

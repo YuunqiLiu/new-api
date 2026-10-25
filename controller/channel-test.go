@@ -42,6 +42,8 @@ type testResult struct {
 	newAPIError *types.NewAPIError
 }
 
+var errChannelTimeBlocked = errors.New("channel test skipped by time policy")
+
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
@@ -71,6 +73,9 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 }
 
 func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+	if channel != nil && common.IsChannelTimeBlocked(channel.Id) {
+		return testResult{localErr: errChannelTimeBlocked}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -911,11 +916,18 @@ type channelTestSummary struct {
 
 func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, testUserID int, allowDisable bool, disableThreshold int64) channelTestSummary {
 	summary := channelTestSummary{}
+	if common.IsChannelTimeBlocked(channel.Id) || (channel.Status == common.ChannelStatusAutoDisabled && !service.CanAutomaticallyRecoverChannel(channel)) {
+		return summary
+	}
+	recoverySnapshot, recoverable := model.SnapshotChannelRecovery(channel)
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
 	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
+		return summary
+	}
+	if errors.Is(result.localErr, errChannelTimeBlocked) || common.IsChannelTimeBlocked(channel.Id) {
 		return summary
 	}
 
@@ -925,6 +937,9 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	newAPIError := result.newAPIError
 	if newAPIError != nil {
 		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
+		if recoverable {
+			_, _ = service.RecordChannelRecoveryFailure(recoverySnapshot, newAPIError)
+		}
 	}
 
 	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
@@ -946,9 +961,10 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		summary.Disabled++
 	}
 
-	if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-		service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-		summary.Enabled++
+	if result.localErr == nil && recoverable && service.ShouldEnableChannel(newAPIError, channel.Status) {
+		if changed, err := service.RecoverChannel(recoverySnapshot, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name); err == nil && changed {
+			summary.Enabled++
+		}
 	}
 
 	channel.UpdateResponseTime(milliseconds)
